@@ -1,0 +1,117 @@
+From 1fc20dba447a2708936ffa2d5ec999bf695f69f2 Mon Sep 17 00:00:00 2001
+Message-Id: <1fc20dba447a2708936ffa2d5ec999bf695f69f2.1657785141.git.chengyou@linux.alibaba.com>
+In-Reply-To: <9965f106e9120a3f4686d83a4433b7030feb863d.1657785141.git.chengyou@linux.alibaba.com>
+References: <9965f106e9120a3f4686d83a4433b7030feb863d.1657785141.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Fri, 24 Dec 2021 10:46:28 +0800
+Subject: [PATCH 5/5] RDMA-CORE/erdma: Add to the build environment
+
+Make the build system can build the provider, and add it to redhat package
+environment.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ CMakeLists.txt                 | 1 +
+ MAINTAINERS                    | 5 +++++
+ README.md                      | 1 +
+ kernel-headers/CMakeLists.txt  | 2 ++
+ providers/erdma/CMakeLists.txt | 5 +++++
+ redhat/rdma-core.spec          | 3 +++
+ 6 files changed, 17 insertions(+)
+ create mode 100644 providers/erdma/CMakeLists.txt
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bb880ff5..e616aac3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -693,6 +693,7 @@ add_subdirectory(providers/bnxt_re)
+ add_subdirectory(providers/cxgb4) # NO SPARSE
+ add_subdirectory(providers/efa)
+ add_subdirectory(providers/efa/man)
++add_subdirectory(providers/erdma)
+ add_subdirectory(providers/hns)
+ add_subdirectory(providers/irdma)
+ add_subdirectory(providers/mlx4)
+diff --git a/MAINTAINERS b/MAINTAINERS
+index edb0026a..975a0ea3 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -61,6 +61,11 @@ M:	Gal Pressman <galpress@amazon.com>
+ S:	Supported
+ F:	providers/efa/
+ 
++ERDMA USERSPACE PROVIDER (for erdma.ko)
++M:	Cheng Xu <chengyou@linux.alibaba.com>
++S:	Supported
++F:	providers/erdma/
++
+ HF1 USERSPACE PROVIDER (for hf1.ko)
+ M:	Mike Marciniszyn <mike.marciniszyn@intel.com>
+ M:	Dennis Dalessandro <dennis.dalessandro@intel.com>
+diff --git a/README.md b/README.md
+index 18c3b014..ebb941e2 100644
+--- a/README.md
++++ b/README.md
+@@ -15,6 +15,7 @@ under the providers/ directory. Support for the following Kernel RDMA drivers
+ is included:
+ 
+  - efa.ko
++ - erdma.ko
+  - iw_cxgb4.ko
+  - hfi1.ko
+  - hns-roce.ko
+diff --git a/kernel-headers/CMakeLists.txt b/kernel-headers/CMakeLists.txt
+index d75df96b..46e2ef39 100644
+--- a/kernel-headers/CMakeLists.txt
++++ b/kernel-headers/CMakeLists.txt
+@@ -23,6 +23,7 @@ publish_internal_headers(rdma
+   rdma/rdma_user_rxe.h
+   rdma/rvt-abi.h
+   rdma/siw-abi.h
++  rdma/erdma-abi.h
+   rdma/vmw_pvrdma-abi.h
+   )
+ 
+@@ -75,6 +76,7 @@ rdma_kernel_provider_abi(
+   rdma/qedr-abi.h
+   rdma/rdma_user_rxe.h
+   rdma/siw-abi.h
++  rdma/erdma-abi.h
+   rdma/vmw_pvrdma-abi.h
+   )
+ 
+diff --git a/providers/erdma/CMakeLists.txt b/providers/erdma/CMakeLists.txt
+new file mode 100644
+index 00000000..11bf4fe5
+--- /dev/null
++++ b/providers/erdma/CMakeLists.txt
+@@ -0,0 +1,5 @@
++rdma_provider(erdma
++  erdma.c
++  erdma_db.c
++  erdma_verbs.c
++)
+diff --git a/redhat/rdma-core.spec b/redhat/rdma-core.spec
+index b3cdccd1..530a4399 100644
+--- a/redhat/rdma-core.spec
++++ b/redhat/rdma-core.spec
+@@ -148,6 +148,8 @@ Provides: libcxgb4 = %{version}-%{release}
+ Obsoletes: libcxgb4 < %{version}-%{release}
+ Provides: libefa = %{version}-%{release}
+ Obsoletes: libefa < %{version}-%{release}
++Provides: liberdma = %{version}-%{release}
++Obsoletes: liberdma < %{version}-%{release}
+ Provides: libhfi1 = %{version}-%{release}
+ Obsoletes: libhfi1 < %{version}-%{release}
+ Provides: libipathverbs = %{version}-%{release}
+@@ -176,6 +178,7 @@ Device-specific plug-in ibverbs userspace drivers are included:
+ 
+ - libcxgb4: Chelsio T4 iWARP HCA
+ - libefa: Amazon Elastic Fabric Adapter
++- liberdma: Alibaba Elastic RDMA (iWarp) Adapter
+ - libhfi1: Intel Omni-Path HFI
+ - libhns: HiSilicon Hip06 SoC
+ - libipathverbs: QLogic InfiniPath HCA
+-- 
+2.37.0
+
