@@ -1,0 +1,14 @@
+Source: erdma
+Maintainer:  alibaba-erdma-group <erdma-group@alibaba.com>
+Build-Depends: debhelper
+Standards-Version: 1.0.0
+
+Package: erdma
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, dkms, cmake
+Description: Linux kernel driver for Elastic RDMA Adapter (ERDMA),
+ ERDMA enables large-scale RDMA acceleration capability in Alibaba ECS
+ environment, initially offered in g7re instance. It can improve the
+ efficiency of large-scale distributed computing and communication
+ significantly and expand dynamically with the cluster scale of Alibaba
+ Cloud.
