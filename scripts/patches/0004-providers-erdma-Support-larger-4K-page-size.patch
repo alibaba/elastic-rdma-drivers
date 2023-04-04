@@ -1,0 +1,152 @@
+From 5e2cdf2102f8f15fa9a2e68b487a157a6360339d Mon Sep 17 00:00:00 2001
+Message-Id: <5e2cdf2102f8f15fa9a2e68b487a157a6360339d.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Fri, 10 Feb 2023 15:35:51 +0800
+Subject: [PATCH 04/15] providers/erdma: Support larger (> 4K) page size
+
+In current code, we assume that the page size is 4K, but in fact it isn't
+true. So, we add larger page size support.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma.c       | 24 +++++++++++++++++-------
+ providers/erdma/erdma.h       |  9 ++++++++-
+ providers/erdma/erdma_verbs.c | 13 ++++++++-----
+ 3 files changed, 33 insertions(+), 13 deletions(-)
+
+diff --git a/providers/erdma/erdma.c b/providers/erdma/erdma.c
+index 3a49490a3060..50e062f5152b 100644
+--- a/providers/erdma/erdma.c
++++ b/providers/erdma/erdma.c
+@@ -60,36 +60,44 @@ static struct verbs_context *erdma_alloc_context(struct ibv_device *device,
+ 		goto err_out;
+ 
+ 	verbs_set_ops(&ctx->ibv_ctx, &erdma_context_ops);
++	ctx->page_size = to_edev(device)->page_size;
+ 	ctx->dev_id = resp.dev_id;
+ 
+ 	ctx->sdb_type = resp.sdb_type;
+-	ctx->sdb_offset = resp.sdb_offset;
++	ctx->sdb_entid = resp.sdb_entid;
+ 
+-	ctx->sdb = mmap(NULL, ERDMA_PAGE_SIZE, PROT_WRITE, MAP_SHARED, cmd_fd,
++	ctx->sdb = mmap(NULL, ctx->page_size, PROT_WRITE, MAP_SHARED, cmd_fd,
+ 			resp.sdb);
+ 	if (ctx->sdb == MAP_FAILED)
+ 		goto err_out;
+ 
+-	ctx->rdb = mmap(NULL, ERDMA_PAGE_SIZE, PROT_WRITE, MAP_SHARED, cmd_fd,
++	ctx->sdb += resp.sdb_off;
++
++	ctx->rdb = mmap(NULL, ctx->page_size, PROT_WRITE, MAP_SHARED, cmd_fd,
+ 			resp.rdb);
+ 	if (ctx->rdb == MAP_FAILED)
+ 		goto err_rdb_map;
+ 
+-	ctx->cdb = mmap(NULL, ERDMA_PAGE_SIZE, PROT_WRITE, MAP_SHARED, cmd_fd,
++	ctx->rdb += resp.rdb_off;
++
++	ctx->cdb = mmap(NULL, ctx->page_size, PROT_WRITE, MAP_SHARED, cmd_fd,
+ 			resp.cdb);
+ 	if (ctx->cdb == MAP_FAILED)
+ 		goto err_cdb_map;
+ 
+-	ctx->page_size = ERDMA_PAGE_SIZE;
++	ctx->cdb += resp.cdb_off;
++
+ 	list_head_init(&ctx->dbrecord_pages_list);
+ 	pthread_mutex_init(&ctx->dbrecord_pages_mutex, NULL);
+ 
+ 	return &ctx->ibv_ctx;
+ 
+ err_cdb_map:
+-	munmap(ctx->rdb, ERDMA_PAGE_SIZE);
++	munmap((void *)align_down((uintptr_t)ctx->rdb, ctx->page_size),
++	       ctx->page_size);
+ err_rdb_map:
+-	munmap(ctx->sdb, ERDMA_PAGE_SIZE);
++	munmap((void *)align_down((uintptr_t)ctx->sdb, ctx->page_size),
++	       ctx->page_size);
+ err_out:
+ 	verbs_uninit_context(&ctx->ibv_ctx);
+ 	free(ctx);
+@@ -106,6 +114,8 @@ erdma_device_alloc(struct verbs_sysfs_dev *sysfs_dev)
+ 	if (!dev)
+ 		return NULL;
+ 
++	dev->page_size = sysconf(_SC_PAGESIZE);
++
+ 	return &dev->ibv_dev;
+ }
+ 
+diff --git a/providers/erdma/erdma.h b/providers/erdma/erdma.h
+index ce13a8b7a3ec..8bc116cf64af 100644
+--- a/providers/erdma/erdma.h
++++ b/providers/erdma/erdma.h
+@@ -20,9 +20,11 @@
+ #endif
+ 
+ #define ERDMA_PAGE_SIZE 4096
++#define ERDMA_PAGE_SHIFT 12
+ 
+ struct erdma_device {
+ 	struct verbs_device ibv_dev;
++	uint32_t page_size;
+ };
+ 
+ #define ERDMA_QP_TABLE_SIZE 4096
+@@ -40,7 +42,7 @@ struct erdma_context {
+ 	pthread_mutex_t qp_table_mutex;
+ 
+ 	uint8_t sdb_type;
+-	uint32_t sdb_offset;
++	uint32_t sdb_entid;
+ 
+ 	void *sdb;
+ 	void *rdb;
+@@ -56,4 +58,9 @@ static inline struct erdma_context *to_ectx(struct ibv_context *base)
+ 	return container_of(base, struct erdma_context, ibv_ctx.context);
+ }
+ 
++static inline struct erdma_device *to_edev(struct ibv_device *ibv_dev)
++{
++	return container_of(ibv_dev, struct erdma_device, ibv_dev.device);
++}
++
+ #endif
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index 2d33d455ddcc..b7e5d3b0d1a4 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -277,8 +277,8 @@ static void __erdma_alloc_dbs(struct erdma_qp *qp, struct erdma_context *ctx)
+ 	uint32_t db_offset;
+ 
+ 	if (ctx->sdb_type == ERDMA_SDB_ENTRY)
+-		db_offset = ctx->sdb_offset * ERDMA_NSDB_PER_ENTRY *
+-			    ERDMA_SQDB_SIZE;
++		db_offset =
++			ctx->sdb_entid * ERDMA_NSDB_PER_ENTRY * ERDMA_SQDB_SIZE;
+ 	else
+ 		db_offset = (qpn & ERDMA_SDB_ALLOC_QPN_MASK) * ERDMA_SQDB_SIZE;
+ 
+@@ -1018,9 +1018,12 @@ void erdma_free_context(struct ibv_context *ibv_ctx)
+ 	struct erdma_context *ctx = to_ectx(ibv_ctx);
+ 	int i;
+ 
+-	munmap(ctx->sdb, ERDMA_PAGE_SIZE);
+-	munmap(ctx->rdb, ERDMA_PAGE_SIZE);
+-	munmap(ctx->cdb, ERDMA_PAGE_SIZE);
++	munmap((void *)align_down((uintptr_t)ctx->sdb, ctx->page_size),
++	       ctx->page_size);
++	munmap((void *)align_down((uintptr_t)ctx->rdb, ctx->page_size),
++	       ctx->page_size);
++	munmap((void *)align_down((uintptr_t)ctx->cdb, ctx->page_size),
++	       ctx->page_size);
+ 
+ 	pthread_mutex_lock(&ctx->qp_table_mutex);
+ 	for (i = 0; i < ERDMA_QP_TABLE_SIZE; ++i) {
+-- 
+2.37.0
+

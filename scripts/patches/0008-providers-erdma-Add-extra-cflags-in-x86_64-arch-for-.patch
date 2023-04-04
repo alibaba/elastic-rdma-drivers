@@ -1,0 +1,32 @@
+From d3ff7906e9d4de7af35140103e07d26cd200decb Mon Sep 17 00:00:00 2001
+Message-Id: <d3ff7906e9d4de7af35140103e07d26cd200decb.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 14 Mar 2023 15:45:20 +0800
+Subject: [PATCH 08/15] providers/erdma: Add extra cflags in x86_64 arch for
+ direct wqe support
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/CMakeLists.txt | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/providers/erdma/CMakeLists.txt b/providers/erdma/CMakeLists.txt
+index 11bf4fe5c6f7..eeb40f79a08e 100644
+--- a/providers/erdma/CMakeLists.txt
++++ b/providers/erdma/CMakeLists.txt
+@@ -3,3 +3,10 @@ rdma_provider(erdma
+   erdma_db.c
+   erdma_verbs.c
+ )
++
++if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
++        set(ERDMA_PRIV_FLAGS "-msse4.1 -msse4.2 -mavx2 -Werror")
++        add_definitions(-DHAVE_AVX_SUPPORT)
++endif()
++
++set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ERDMA_PRIV_FLAGS}")
+-- 
+2.37.0
+

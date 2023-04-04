@@ -1,0 +1,34 @@
+From 129baa81a98c77020c31a50fa9fc741756504f26 Mon Sep 17 00:00:00 2001
+Message-Id: <129baa81a98c77020c31a50fa9fc741756504f26.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 4 Apr 2023 14:18:01 +0800
+Subject: [PATCH 12/15] libibverbs: Let ibv_devinfo show eRDMA device
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ libibverbs/examples/devinfo.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/libibverbs/examples/devinfo.c b/libibverbs/examples/devinfo.c
+index cef6e2ea10ce..b9c7b2904ee4 100644
+--- a/libibverbs/examples/devinfo.c
++++ b/libibverbs/examples/devinfo.c
+@@ -522,8 +522,11 @@ static int print_hca_cap(struct ibv_device *ib_dev, uint8_t ib_port)
+ 	}
+ 
+ 	printf("hca_id:\t%s\n", ibv_get_device_name(ib_dev));
+-	printf("\ttransport:\t\t\t%s (%d)\n",
+-	       transport_str(ib_dev->transport_type), ib_dev->transport_type);
++	if (device_attr.orig_attr.vendor_id != 0x1ded)
++		printf("\ttransport:\t\t\t%s (%d)\n",
++			transport_str(ib_dev->transport_type), ib_dev->transport_type);
++	else
++		printf("\ttransport:\t\t\t%s (%d)\n", "eRDMA", ib_dev->transport_type);
+ 	if (strlen(device_attr.orig_attr.fw_ver))
+ 		printf("\tfw_ver:\t\t\t\t%s\n", device_attr.orig_attr.fw_ver);
+ 	printf("\tnode_guid:\t\t\t%s\n", guid_str(device_attr.orig_attr.node_guid, buf));
+-- 
+2.37.0
+

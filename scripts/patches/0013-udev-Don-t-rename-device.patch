@@ -1,0 +1,29 @@
+From bf0b3c1202daa2356d732fa1e19297241eeb68ad Mon Sep 17 00:00:00 2001
+Message-Id: <bf0b3c1202daa2356d732fa1e19297241eeb68ad.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 4 Apr 2023 15:06:58 +0800
+Subject: [PATCH 13/15] udev: Don't rename device
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ kernel-boot/rdma-persistent-naming.rules | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel-boot/rdma-persistent-naming.rules b/kernel-boot/rdma-persistent-naming.rules
+index 6f9c53a53bbb..41d86df10a54 100644
+--- a/kernel-boot/rdma-persistent-naming.rules
++++ b/kernel-boot/rdma-persistent-naming.rules
+@@ -26,7 +26,7 @@
+ #   Device type = RoCE
+ #   mlx5_0 -> rocex525400c0fe123455
+ #
+-ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_FALLBACK"
++#ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_FALLBACK"
+ 
+ # Example:
+ # * NAME_FIXED 
+-- 
+2.37.0
+

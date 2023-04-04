@@ -1,0 +1,87 @@
+From a4ca7b8f68759a6ea150c7f6fa702050f67f13f0 Mon Sep 17 00:00:00 2001
+Message-Id: <a4ca7b8f68759a6ea150c7f6fa702050f67f13f0.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 14 Mar 2023 15:47:48 +0800
+Subject: [PATCH 09/15] providers/erdma: Introduce a bitmap for db resources
+ allocation
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma.c       | 14 +++++++++++++-
+ providers/erdma/erdma.h       |  2 ++
+ providers/erdma/erdma_verbs.c |  2 ++
+ 3 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/providers/erdma/erdma.c b/providers/erdma/erdma.c
+index 50e062f5152b..c6c1a9678117 100644
+--- a/providers/erdma/erdma.c
++++ b/providers/erdma/erdma.c
+@@ -8,6 +8,7 @@
+ #include <sys/mman.h>
+ #include <sys/types.h>
+ #include <unistd.h>
++#include <util/bitmap.h>
+ #include <util/mmio.h>
+ #include <util/udma_barrier.h>
+ #include <util/util.h>
+@@ -66,10 +67,19 @@ static struct verbs_context *erdma_alloc_context(struct ibv_device *device,
+ 	ctx->sdb_type = resp.sdb_type;
+ 	ctx->sdb_entid = resp.sdb_entid;
+ 
++	ctx->dwqe_bitmap = bitmap_alloc0(32);
++	if (!ctx->dwqe_bitmap)
++		goto err_out;
++
++	if (ctx->sdb_type == ERDMA_SDB_PAGE)
++		bitmap_fill_region(ctx->dwqe_bitmap, 0, 31);
++	else if (ctx->sdb_type == ERDMA_SDB_ENTRY)
++		bitmap_fill_region(ctx->dwqe_bitmap, 0, 1);
++
+ 	ctx->sdb = mmap(NULL, ctx->page_size, PROT_WRITE, MAP_SHARED, cmd_fd,
+ 			resp.sdb);
+ 	if (ctx->sdb == MAP_FAILED)
+-		goto err_out;
++		goto err_sdb_map;
+ 
+ 	ctx->sdb += resp.sdb_off;
+ 
+@@ -98,6 +108,8 @@ err_cdb_map:
+ err_rdb_map:
+ 	munmap((void *)align_down((uintptr_t)ctx->sdb, ctx->page_size),
+ 	       ctx->page_size);
++err_sdb_map:
++	free(ctx->dwqe_bitmap);
+ err_out:
+ 	verbs_uninit_context(&ctx->ibv_ctx);
+ 	free(ctx);
+diff --git a/providers/erdma/erdma.h b/providers/erdma/erdma.h
+index 8bc116cf64af..ce96fa40a8a0 100644
+--- a/providers/erdma/erdma.h
++++ b/providers/erdma/erdma.h
+@@ -51,6 +51,8 @@ struct erdma_context {
+ 	uint32_t page_size;
+ 	pthread_mutex_t dbrecord_pages_mutex;
+ 	struct list_head dbrecord_pages_list;
++
++	unsigned long *dwqe_bitmap;
+ };
+ 
+ static inline struct erdma_context *to_ectx(struct ibv_context *base)
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index 9aae6b3b0a82..12bd74e5387f 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -1061,6 +1061,8 @@ void erdma_free_context(struct ibv_context *ibv_ctx)
+ 	pthread_mutex_unlock(&ctx->qp_table_mutex);
+ 	pthread_mutex_destroy(&ctx->qp_table_mutex);
+ 
++	free(ctx->dwqe_bitmap);
++
+ 	verbs_uninit_context(&ctx->ibv_ctx);
+ 	free(ctx);
+ }
+-- 
+2.37.0
+

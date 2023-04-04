@@ -1,0 +1,54 @@
+From 51ba9b703958f4a5c18303894b5659cd1adb5dd4 Mon Sep 17 00:00:00 2001
+Message-Id: <51ba9b703958f4a5c18303894b5659cd1adb5dd4.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Mon, 13 Mar 2023 20:48:42 +0800
+Subject: [PATCH 07/15] providers/erdma: Fix typo
+
+Atomic FAA is short for atomic fetch and add, not FAD.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma_hw.h    | 2 +-
+ providers/erdma/erdma_verbs.c | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/providers/erdma/erdma_hw.h b/providers/erdma/erdma_hw.h
+index 45ca1a7ffb89..09f7d63d1fa1 100644
+--- a/providers/erdma/erdma_hw.h
++++ b/providers/erdma/erdma_hw.h
+@@ -61,7 +61,7 @@ enum erdma_opcode {
+ 	ERDMA_OP_LOCAL_INV = 15,
+ 	ERDMA_OP_READ_WITH_INV = 16,
+ 	ERDMA_OP_ATOMIC_CAS = 17,
+-	ERDMA_OP_ATOMIC_FAD = 18,
++	ERDMA_OP_ATOMIC_FAA = 18,
+ 	ERDMA_NUM_OPCODES = 19,
+ 	ERDMA_OP_INVALID = ERDMA_NUM_OPCODES + 1
+ };
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index 71700a36801c..9aae6b3b0a82 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -658,7 +658,7 @@ static int erdma_push_one_sqe(struct erdma_qp *qp, struct ibv_send_wr *wr,
+ 				htole64(wr->wr.atomic.compare_add);
+ 		} else {
+ 			sqe_hdr |= FIELD_PREP(ERDMA_SQE_HDR_OPCODE_MASK,
+-					      ERDMA_OP_ATOMIC_FAD);
++					      ERDMA_OP_ATOMIC_FAA);
+ 			atomic_sqe->fetchadd_swap_data =
+ 				htole64(wr->wr.atomic.compare_add);
+ 		}
+@@ -900,7 +900,7 @@ static const enum ibv_wc_opcode wc_mapping_table[ERDMA_NUM_OPCODES] = {
+ 	[ERDMA_OP_SEND_WITH_INV] = IBV_WC_SEND,
+ 	[ERDMA_OP_READ_WITH_INV] = IBV_WC_RDMA_READ,
+ 	[ERDMA_OP_ATOMIC_CAS] = IBV_WC_COMP_SWAP,
+-	[ERDMA_OP_ATOMIC_FAD] = IBV_WC_FETCH_ADD,
++	[ERDMA_OP_ATOMIC_FAA] = IBV_WC_FETCH_ADD,
+ };
+ 
+ static const struct {
+-- 
+2.37.0
+

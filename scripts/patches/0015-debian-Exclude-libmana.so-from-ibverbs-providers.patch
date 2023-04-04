@@ -1,0 +1,32 @@
+From 48b1a690d0561bd9efc80af502ee536d21f9c84f Mon Sep 17 00:00:00 2001
+Message-Id: <48b1a690d0561bd9efc80af502ee536d21f9c84f.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Benjamin Drung <bdrung@ubuntu.com>
+Date: Tue, 3 Jan 2023 17:12:22 +0100
+Subject: [PATCH 15/15] debian: Exclude libmana.so from ibverbs-providers
+
+`/usr/lib/*/libmana.so` is shipped by the libibverbs-dev package and
+should not be installed in ibverbs-providers.
+
+Signed-off-by: Benjamin Drung <bdrung@ubuntu.com>
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ debian/ibverbs-providers.install | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/debian/ibverbs-providers.install b/debian/ibverbs-providers.install
+index f69498d96142..a003a3057a5b 100644
+--- a/debian/ibverbs-providers.install
++++ b/debian/ibverbs-providers.install
+@@ -1,6 +1,6 @@
+ etc/libibverbs.d/
+ usr/lib/*/libefa.so.*
+ usr/lib/*/libibverbs/lib*-rdmav*.so
+-usr/lib/*/libmana.so*
++usr/lib/*/libmana.so.*
+ usr/lib/*/libmlx4.so.*
+ usr/lib/*/libmlx5.so.*
+-- 
+2.37.0
+

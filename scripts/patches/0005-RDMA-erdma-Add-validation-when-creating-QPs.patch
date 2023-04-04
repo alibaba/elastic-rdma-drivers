@@ -1,0 +1,58 @@
+From f63a33e04660f326609bc21ab336e68b260e7ee5 Mon Sep 17 00:00:00 2001
+Message-Id: <f63a33e04660f326609bc21ab336e68b260e7ee5.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Mon, 13 Mar 2023 16:39:51 +0800
+Subject: [PATCH 05/15] RDMA/erdma: Add validation when creating QPs
+
+Add validation in erdma_create_qp to prevent being trapped into kernel
+uselessly when attr is not supported.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma_verbs.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index b7e5d3b0d1a4..608988d7e129 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -288,6 +288,21 @@ static void __erdma_alloc_dbs(struct erdma_qp *qp, struct erdma_context *ctx)
+ 		    (qpn & ERDMA_RDB_ALLOC_QPN_MASK) * ERDMA_RQDB_SPACE_SIZE;
+ }
+ 
++static int erdma_check_qp_attr(struct erdma_context *ctx,
++			       struct ibv_qp_init_attr *attr)
++{
++	if (attr->qp_type != IBV_QPT_RC)
++		return -EINVAL;
++
++	if (!attr->recv_cq || !attr->send_cq)
++		return -EINVAL;
++
++	if (attr->srq)
++		return -EINVAL;
++
++	return 0;
++}
++
+ static int erdma_store_qp(struct erdma_context *ctx, struct erdma_qp *qp)
+ {
+ 	uint32_t tbl_idx, tbl_off;
+@@ -434,6 +449,12 @@ struct ibv_qp *erdma_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *attr)
+ 	struct erdma_qp *qp;
+ 	int rv;
+ 
++	rv = erdma_check_qp_attr(ctx, attr);
++	if (rv) {
++		errno = -rv;
++		return NULL;
++	}
++
+ 	qp = calloc(1, sizeof(*qp));
+ 	if (!qp)
+ 		return NULL;
+-- 
+2.37.0
+

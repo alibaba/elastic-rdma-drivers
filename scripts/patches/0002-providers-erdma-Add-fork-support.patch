@@ -1,0 +1,92 @@
+From 3620dd0a6c48a1e9501040ff29f70d86a4481a58 Mon Sep 17 00:00:00 2001
+Message-Id: <3620dd0a6c48a1e9501040ff29f70d86a4481a58.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Thu, 9 Feb 2023 17:55:22 +0800
+Subject: [PATCH 02/15] providers/erdma: Add fork support
+
+Queue buffers should be marked as MADV_DOFORK, otherwise it will have
+problems in fork scenario.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma_verbs.c | 25 +++++++++++++++++++++++--
+ 1 file changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index 3f99b34a387c..2d33d455ddcc 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -185,6 +185,13 @@ struct ibv_cq *erdma_create_cq(struct ibv_context *ctx, int num_cqe,
+ 		return NULL;
+ 	}
+ 
++	rv = ibv_dontfork_range(cq->queue, cq_size);
++	if (rv) {
++		free(cq->queue);
++		cq->queue = NULL;
++		goto error_alloc;
++	}
++
+ 	memset(cq->queue, 0, cq_size);
+ 
+ 	db_records = erdma_alloc_dbrecords(ectx);
+@@ -226,8 +233,10 @@ error_alloc:
+ 	if (db_records)
+ 		erdma_dealloc_dbrecords(ectx, db_records);
+ 
+-	if (cq->queue)
++	if (cq->queue) {
++		ibv_dofork_range(cq->queue, cq_size);
+ 		free(cq->queue);
++	}
+ 
+ 	free(cq);
+ 
+@@ -252,8 +261,10 @@ int erdma_destroy_cq(struct ibv_cq *base_cq)
+ 	if (cq->db_record)
+ 		erdma_dealloc_dbrecords(ctx, cq->db_record);
+ 
+-	if (cq->queue)
++	if (cq->queue) {
++		ibv_dofork_range(cq->queue, cq->depth << CQE_SHIFT);
+ 		free(cq->queue);
++	}
+ 
+ 	free(cq);
+ 
+@@ -349,6 +360,12 @@ static int erdma_alloc_qp_buf_and_db(struct erdma_context *ctx,
+ 		return -1;
+ 	}
+ 
++	rv = ibv_dontfork_range(qp->qbuf, queue_size);
++	if (rv) {
++		errno = rv;
++		goto err_dontfork;
++	}
++
+ 	/* doorbell record allocation. */
+ 	qp->db_records = erdma_alloc_dbrecords(ctx);
+ 	if (!qp->db_records) {
+@@ -367,6 +384,9 @@ static int erdma_alloc_qp_buf_and_db(struct erdma_context *ctx,
+ 	return 0;
+ 
+ err_dbrec:
++	ibv_dofork_range(qp->qbuf, queue_size);
++
++err_dontfork:
+ 	free(qp->qbuf);
+ 
+ 	return -1;
+@@ -381,6 +401,7 @@ static void erdma_free_qp_buf_and_db(struct erdma_context *ctx,
+ 	if (qp->db_records)
+ 		erdma_dealloc_dbrecords(ctx, qp->db_records);
+ 
++	ibv_dofork_range(qp->qbuf, qp->qbuf_size);
+ 	free(qp->qbuf);
+ }
+ 
+-- 
+2.37.0
+

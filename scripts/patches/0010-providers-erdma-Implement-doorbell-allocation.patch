@@ -1,0 +1,114 @@
+From 6142ca809b1fb1b2dadab37c1eaa6569977508be Mon Sep 17 00:00:00 2001
+Message-Id: <6142ca809b1fb1b2dadab37c1eaa6569977508be.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 14 Mar 2023 16:02:54 +0800
+Subject: [PATCH 10/15] providers/erdma: Implement doorbell allocation
+
+Contexts with sdb_type = ERDMA_SDB_PAGE have 32 SQ doorbell slots, 31
+direct doorbells and one shared doorbell. If there are free direct
+doorbell slots, a QP will be assigned a direct doorbell, otherwise the QP
+can only use the shared doorbell to post WRs by normal doorbell mechanism.
+
+Contexts with sdb_type = ERDMA_SDB_ENTRY is same as the ones with sdb_type
+= ERDMA_SDB_PAGE, except the direct doorbell slot number is 1. Contexts
+with sdb_type = ERDMA_SDB_SHARED have no direct doorbell slots.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma_verbs.c | 39 ++++++++++++++++++++++++++++++-----
+ providers/erdma/erdma_verbs.h |  2 ++
+ 2 files changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index 12bd74e5387f..c36d824eb3a0 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -12,6 +12,7 @@
+ #include <sys/mman.h>
+ #include <sys/types.h>
+ #include <unistd.h>
++#include <util/bitmap.h>
+ #include <util/mmio.h>
+ #include <util/udma_barrier.h>
+ #include <util/util.h>
+@@ -274,15 +275,35 @@ int erdma_destroy_cq(struct ibv_cq *base_cq)
+ static void __erdma_alloc_dbs(struct erdma_qp *qp, struct erdma_context *ctx)
+ {
+ 	uint32_t qpn = qp->id;
+-	uint32_t db_offset;
++	int dwqe_index;
++
++	pthread_mutex_lock(&ctx->dbrecord_pages_mutex);
++
++	dwqe_index = bitmap_find_first_bit(ctx->dwqe_bitmap, 0, 32);
++
++	if (dwqe_index != 32) {
++		bitmap_clear_bit(ctx->dwqe_bitmap, dwqe_index);
++		qp->dwqe_index = dwqe_index;
++		qp->disable_dwqe = false;
++		qp->sq.db = ctx->sdb + (dwqe_index + 1) * ERDMA_SQDB_SIZE;
++	} else {
++		qp->disable_dwqe = true;
++		qp->sq.db = ctx->sdb;
++		if (ctx->sdb_type == ERDMA_SDB_SHARED)
++			qp->sq.db += (qpn & ERDMA_SDB_ALLOC_QPN_MASK) *
++				     ERDMA_SQDB_SIZE;
++	}
+ 
+ 	if (ctx->sdb_type == ERDMA_SDB_ENTRY)
+-		db_offset =
++		qp->sq.db +=
+ 			ctx->sdb_entid * ERDMA_NSDB_PER_ENTRY * ERDMA_SQDB_SIZE;
+-	else
+-		db_offset = (qpn & ERDMA_SDB_ALLOC_QPN_MASK) * ERDMA_SQDB_SIZE;
+ 
+-	qp->sq.db = ctx->sdb + db_offset;
++	pthread_mutex_unlock(&ctx->dbrecord_pages_mutex);
++
++#ifndef HAVE_AVX_SUPPORT
++	qp->disable_dwqe = true;
++#endif
++
+ 	/* qpn[6:0] as the index in this rq db page. */
+ 	qp->rq.db = ctx->rdb +
+ 		    (qpn & ERDMA_RDB_ALLOC_QPN_MASK) * ERDMA_RQDB_SPACE_SIZE;
+@@ -392,6 +413,7 @@ static int erdma_alloc_qp_buf_and_db(struct erdma_context *ctx,
+ 	*(qp->db_records + 1) = 0;
+ 	qp->sq.db_record = qp->db_records;
+ 	qp->rq.db_record = qp->db_records + 1;
++	qp->disable_dwqe = true;
+ 
+ 	pthread_spin_init(&qp->sq_lock, PTHREAD_PROCESS_PRIVATE);
+ 	pthread_spin_init(&qp->rq_lock, PTHREAD_PROCESS_PRIVATE);
+@@ -413,6 +435,13 @@ static void erdma_free_qp_buf_and_db(struct erdma_context *ctx,
+ 	pthread_spin_destroy(&qp->sq_lock);
+ 	pthread_spin_destroy(&qp->rq_lock);
+ 
++	pthread_mutex_lock(&ctx->dbrecord_pages_mutex);
++
++	if (!qp->disable_dwqe)
++		bitmap_set_bit(ctx->dwqe_bitmap, qp->dwqe_index);
++
++	pthread_mutex_unlock(&ctx->dbrecord_pages_mutex);
++
+ 	if (qp->db_records)
+ 		erdma_dealloc_dbrecords(ctx, qp->db_records);
+ 
+diff --git a/providers/erdma/erdma_verbs.h b/providers/erdma/erdma_verbs.h
+index ce9a12349011..0aade3f5a222 100644
+--- a/providers/erdma/erdma_verbs.h
++++ b/providers/erdma/erdma_verbs.h
+@@ -44,6 +44,8 @@ struct erdma_qp {
+ 	pthread_spinlock_t rq_lock;
+ 
+ 	int sq_sig_all;
++	int dwqe_index;
++	bool disable_dwqe;
+ 
+ 	struct erdma_queue sq;
+ 	struct erdma_queue rq;
+-- 
+2.37.0
+

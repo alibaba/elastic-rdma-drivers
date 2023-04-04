@@ -1,0 +1,90 @@
+From 0e8d67644d8621e42d6146fe35a4f1b0943b6889 Mon Sep 17 00:00:00 2001
+Message-Id: <0e8d67644d8621e42d6146fe35a4f1b0943b6889.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 4 Apr 2023 15:33:09 +0800
+Subject: [PATCH 14/15] build: Add custom build version/script for erdma
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ debian/changelog      |  6 ++++++
+ redhat/rdma-core.spec |  2 +-
+ rpm/Makefile          | 39 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 46 insertions(+), 1 deletion(-)
+ create mode 100644 rpm/Makefile
+
+diff --git a/debian/changelog b/debian/changelog
+index 881c59aa170d..103e6b0ecbfd 100644
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,3 +1,9 @@
++rdma-core (44.1-2) unstable; urgency=medium
++
++  * Add non-upstream erdma provider features.
++
++ -- Cheng Xu <chengyou@linux.alibaba.com>  Tue, 14 Mar 2023 17:41:30 +0800
++
+ rdma-core (44.1-1) unstable; urgency=low
+ 
+   * New upstream release.
+diff --git a/redhat/rdma-core.spec b/redhat/rdma-core.spec
+index 29ac32f69c14..d2b3716fd9ff 100644
+--- a/redhat/rdma-core.spec
++++ b/redhat/rdma-core.spec
+@@ -1,6 +1,6 @@
+ Name: rdma-core
+ Version: 44.1
+-Release: 1%{?dist}
++Release: 2%{?dist}
+ Summary: RDMA core userspace libraries and daemons
+ 
+ # Almost everything is licensed under the OFA dual GPLv2, 2 Clause BSD license
+diff --git a/rpm/Makefile b/rpm/Makefile
+new file mode 100644
+index 000000000000..b71f38126140
+--- /dev/null
++++ b/rpm/Makefile
+@@ -0,0 +1,39 @@
++# Makefile for creating rpm of the Alibaba ERDMA driver
++
++NAME = rdma-core
++SPEC = $(NAME).spec
++VERSION = 44.1
++
++TOPDIR  := $(shell git rev-parse --show-toplevel)
++TAG	?= HEAD
++TARBALL	= $(NAME)-$(VERSION).tgz
++
++RPMDEFS = --define '_topdir  %(pwd)' \
++          --define '_ntopdir %(pwd)' \
++          --define '_builddir  %{_ntopdir}/build' \
++          --define '_buildrootdir %{_builddir}' \
++          --define '_sourcedir %{_ntopdir}' \
++          --define '_specdir   %{_ntopdir}' \
++          --define '_rpmdir    %{_ntopdir}' \
++          --define '_srcrpmdir %{_ntopdir}' \
++	  --define "driver_version $(VERSION)"
++
++all : rpm
++
++tarball : $(TARBALL)
++$(TARBALL) : always
++	(cd $(TOPDIR) && \
++	git archive --format=tar --prefix=$(NAME)-$(VERSION)/ $(TAG) ) > $@
++
++srpm : $(TARBALL) Makefile
++	rpmbuild -bs $(RPMDEFS) ../redhat/$(SPEC)
++
++rpm : $(TARBALL) Makefile
++	rpmbuild -ba $(RPMDEFS) ../redhat/$(SPEC)
++
++clean :
++	rm -f $(TARBALL) *.src.rpm
++
++always:
++
++.PHONY : srpm clean always
+-- 
+2.37.0
+

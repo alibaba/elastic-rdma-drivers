@@ -1,0 +1,131 @@
+From 07f5ecb9f261bcb4f83226e350dd747dce4e97cd Mon Sep 17 00:00:00 2001
+Message-Id: <07f5ecb9f261bcb4f83226e350dd747dce4e97cd.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Tue, 14 Mar 2023 16:54:36 +0800
+Subject: [PATCH 11/15] providers/erdma: Using direct wqe to psot WR if
+ applicable
+
+If SQ is empty, we will post the first WR using direct wqe.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma_verbs.c | 41 +++++++++++++++++++++++++++++++----
+ 1 file changed, 37 insertions(+), 4 deletions(-)
+
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index c36d824eb3a0..89b5bc8335f0 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -7,6 +7,11 @@
+ 
+ #include <ccan/minmax.h>
+ #include <endian.h>
++#ifdef HAVE_AVX_SUPPORT
++#include <immintrin.h>
++#else
++#define _mm256_store_si256(a, b) fprintf(stderr, "not supported")
++#endif
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <sys/mman.h>
+@@ -272,6 +277,26 @@ int erdma_destroy_cq(struct ibv_cq *base_cq)
+ 	return 0;
+ }
+ 
++static inline void kick_hw_sqe(struct erdma_qp *qp, uint16_t pi,
++			       uint32_t wqebb_cnt)
++{
++	uint16_t idx = pi & (qp->sq.depth - 1);
++	void *sqe = get_sq_wqebb(qp, idx);
++	uint32_t i;
++
++	*(__le64 *)qp->sq.db_record = htole64(*(uint64_t *)sqe);
++
++	udma_to_device_barrier();
++
++	for (i = 0; i < wqebb_cnt; i++) {
++		_mm256_store_si256(qp->sq.db + (i << 5),
++				   _mm256_load_si256(sqe));
++		sqe = get_sq_wqebb(qp, idx + i + 1);
++	}
++
++	mmio_flush_writes();
++}
++
+ static void __erdma_alloc_dbs(struct erdma_qp *qp, struct erdma_context *ctx)
+ {
+ 	uint32_t qpn = qp->id;
+@@ -577,7 +602,7 @@ int erdma_destroy_qp(struct ibv_qp *base_qp)
+ }
+ 
+ static int erdma_push_one_sqe(struct erdma_qp *qp, struct ibv_send_wr *wr,
+-			      uint16_t *sq_pi)
++			      uint16_t *sq_pi, int use_direct)
+ {
+ 	uint32_t i, bytes, sgl_off, sgl_idx, wqebb_cnt, opcode, wqe_size = 0;
+ 	struct erdma_atomic_sqe *atomic_sqe;
+@@ -605,7 +630,8 @@ static int erdma_push_one_sqe(struct erdma_qp *qp, struct ibv_send_wr *wr,
+ 		  FIELD_PREP(ERDMA_SQE_HDR_FENCE_MASK,
+ 			     wr->send_flags & IBV_SEND_FENCE ? 1 : 0) |
+ 		  FIELD_PREP(ERDMA_SQE_HDR_INLINE_MASK,
+-			     wr->send_flags & IBV_SEND_INLINE ? 1 : 0);
++			     wr->send_flags & IBV_SEND_INLINE ? 1 : 0) |
++		  FIELD_PREP(ERDMA_SQE_HDR_DWQE_MASK, use_direct);
+ 
+ 	switch (wr->opcode) {
+ 	case IBV_WR_RDMA_WRITE:
+@@ -792,6 +818,9 @@ out:
+ 	*(__le64 *)sqe = htole64(sqe_hdr);
+ 	*sq_pi = tmp_pi + wqebb_cnt;
+ 
++	if (use_direct)
++		kick_hw_sqe(qp, tmp_pi, wqebb_cnt);
++
+ 	return 0;
+ }
+ 
+@@ -801,6 +830,7 @@ int erdma_post_send(struct ibv_qp *base_qp, struct ibv_send_wr *wr,
+ 	struct erdma_qp *qp = to_eqp(base_qp);
+ 	int new_sqe = 0, rv = 0;
+ 	uint16_t sq_pi;
++	int dsqe;
+ 
+ 	*bad_wr = NULL;
+ 
+@@ -812,6 +842,7 @@ int erdma_post_send(struct ibv_qp *base_qp, struct ibv_send_wr *wr,
+ 	pthread_spin_lock(&qp->sq_lock);
+ 
+ 	sq_pi = qp->sq.pi;
++	dsqe = (!qp->disable_dwqe) && (sq_pi == qp->sq.ci) ? 1 : 0;
+ 
+ 	while (wr) {
+ 		if ((uint16_t)(sq_pi - qp->sq.ci) >= qp->sq.depth) {
+@@ -820,19 +851,21 @@ int erdma_post_send(struct ibv_qp *base_qp, struct ibv_send_wr *wr,
+ 			break;
+ 		}
+ 
+-		rv = erdma_push_one_sqe(qp, wr, &sq_pi);
++		rv = erdma_push_one_sqe(qp, wr, &sq_pi, dsqe);
+ 		if (rv) {
+ 			*bad_wr = wr;
+ 			break;
+ 		}
+ 
+ 		new_sqe++;
++		dsqe = 0;
+ 		wr = wr->next;
+ 	}
+ 
+ 	if (new_sqe) {
+ 		qp->sq.pi = sq_pi;
+-		__kick_sq_db(qp, sq_pi); /* normal doorbell. */
++		if (new_sqe - dsqe)
++			__kick_sq_db(qp, sq_pi); /* normal doorbell. */
+ 	}
+ 
+ 	pthread_spin_unlock(&qp->sq_lock);
+-- 
+2.37.0
+

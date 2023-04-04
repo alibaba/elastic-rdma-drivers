@@ -1,0 +1,62 @@
+From 9457529f279523aa9fbbc0bc6a462e9e02e5d9fb Mon Sep 17 00:00:00 2001
+Message-Id: <9457529f279523aa9fbbc0bc6a462e9e02e5d9fb.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Mon, 13 Mar 2023 16:58:35 +0800
+Subject: [PATCH 06/15] RDMA/erdma: Add SEND_WITH_INV support
+
+Opcode IBV_WR_SEND_WITH_INV may be used by SPDK rdma, so we add support
+for it.
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ providers/erdma/erdma_hw.h    |  5 ++++-
+ providers/erdma/erdma_verbs.c | 10 ++++++++--
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/providers/erdma/erdma_hw.h b/providers/erdma/erdma_hw.h
+index 1eecbcec2f0b..45ca1a7ffb89 100644
+--- a/providers/erdma/erdma_hw.h
++++ b/providers/erdma/erdma_hw.h
+@@ -185,7 +185,10 @@ struct erdma_write_sqe {
+ 
+ struct erdma_send_sqe {
+ 	__le64 hdr;
+-	__be32 imm_data;
++	union {
++		__be32 imm_data;
++		__le32 invalid_stag;
++	};
+ 	__le32 length;
+ 	struct erdma_sge sgl[];
+ };
+diff --git a/providers/erdma/erdma_verbs.c b/providers/erdma/erdma_verbs.c
+index 608988d7e129..71700a36801c 100644
+--- a/providers/erdma/erdma_verbs.c
++++ b/providers/erdma/erdma_verbs.c
+@@ -604,13 +604,19 @@ static int erdma_push_one_sqe(struct erdma_qp *qp, struct ibv_send_wr *wr,
+ 		break;
+ 	case IBV_WR_SEND:
+ 	case IBV_WR_SEND_WITH_IMM:
++	case IBV_WR_SEND_WITH_INV:
+ 		if (wr->opcode == IBV_WR_SEND)
+ 			opcode = ERDMA_OP_SEND;
+-		else
++		else if (wr->opcode == IBV_WR_SEND_WITH_IMM)
+ 			opcode = ERDMA_OP_SEND_WITH_IMM;
++		else
++			opcode = ERDMA_OP_SEND_WITH_INV;
+ 		sqe_hdr |= FIELD_PREP(ERDMA_SQE_HDR_OPCODE_MASK, opcode);
+ 		send_sqe = sqe;
+-		send_sqe->imm_data = wr->imm_data;
++		if (wr->opcode == IBV_WR_SEND_WITH_INV)
++			send_sqe->invalid_stag = htole32(wr->invalidate_rkey);
++		else
++			send_sqe->imm_data = wr->imm_data;
+ 
+ 		length_field = &send_sqe->length;
+ 		/* sgl is in the half of current wqebb (offset 16Byte) */
+-- 
+2.37.0
+

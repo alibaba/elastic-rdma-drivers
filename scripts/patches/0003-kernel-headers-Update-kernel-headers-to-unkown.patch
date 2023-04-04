@@ -1,0 +1,35 @@
+From 58c1e2940f3e70092e40aba09a7af87c7f1db0cf Mon Sep 17 00:00:00 2001
+Message-Id: <58c1e2940f3e70092e40aba09a7af87c7f1db0cf.1680595724.git.chengyou@linux.alibaba.com>
+In-Reply-To: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+References: <60f692ff7da7b8c655294492cf0aa44f79406174.1680595724.git.chengyou@linux.alibaba.com>
+From: Cheng Xu <chengyou@linux.alibaba.com>
+Date: Fri, 10 Feb 2023 15:27:43 +0800
+Subject: [PATCH 03/15] kernel-headers: Update kernel headers to unkown
+
+Signed-off-by: Cheng Xu <chengyou@linux.alibaba.com>
+---
+ kernel-headers/rdma/erdma-abi.h | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/kernel-headers/rdma/erdma-abi.h b/kernel-headers/rdma/erdma-abi.h
+index b7a0222f978f..57f8942a3c56 100644
+--- a/kernel-headers/rdma/erdma-abi.h
++++ b/kernel-headers/rdma/erdma-abi.h
+@@ -40,10 +40,13 @@ struct erdma_uresp_alloc_ctx {
+ 	__u32 dev_id;
+ 	__u32 pad;
+ 	__u32 sdb_type;
+-	__u32 sdb_offset;
++	__u32 sdb_entid;
+ 	__aligned_u64 sdb;
+ 	__aligned_u64 rdb;
+ 	__aligned_u64 cdb;
++	__u32 sdb_off;
++	__u32 rdb_off;
++	__u32 cdb_off;
+ };
+ 
+ #endif
+-- 
+2.37.0
+
