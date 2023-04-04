@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 
 /* Authors: Cheng Xu <chengyou@linux.alibaba.com> */
 /*          Kai Shen <kaishen@linux.alibaba.com> */
@@ -33,18 +33,26 @@ static void notify_cq(struct erdma_cq *cq, u8 solcitied)
 int erdma_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 {
 	struct erdma_cq *cq = to_ecq(ibcq);
+	u16 dim_timeout = cq->dim.timeout;
 	unsigned long irq_flags;
 	int ret = 0;
 
 	spin_lock_irqsave(&cq->kern_cq.lock, irq_flags);
 
-	notify_cq(cq, (flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
-
-	if ((flags & IB_CQ_REPORT_MISSED_EVENTS) && get_next_valid_cqe(cq))
+	if ((flags & IB_CQ_REPORT_MISSED_EVENTS) && get_next_valid_cqe(cq)) {
 		ret = 1;
+		goto unlock;
+	}
 
-	cq->kern_cq.notify_cnt++;
-
+	if (!dim_timeout) {
+		notify_cq(cq, (flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
+		cq->kern_cq.notify_cnt++;
+	} else {
+		cq->dim.flags |= flags;
+		hrtimer_start(&cq->dim.timer, ns_to_ktime(dim_timeout * NSEC_PER_USEC),
+			HRTIMER_MODE_REL_PINNED);
+	}
+unlock:
 	spin_unlock_irqrestore(&cq->kern_cq.lock, irq_flags);
 
 	return ret;
@@ -59,7 +67,6 @@ static const enum ib_wc_opcode wc_mapping_table[ERDMA_NUM_OPCODES] = {
 	[ERDMA_OP_RECV_IMM] = IB_WC_RECV_RDMA_WITH_IMM,
 	[ERDMA_OP_RECV_INV] = IB_WC_RECV,
 	[ERDMA_OP_WRITE_WITH_IMM] = IB_WC_RDMA_WRITE,
-	[ERDMA_OP_INVALIDATE] = IB_WC_LOCAL_INV,
 	[ERDMA_OP_RSP_SEND_IMM] = IB_WC_RECV,
 	[ERDMA_OP_SEND_WITH_INV] = IB_WC_SEND,
 	[ERDMA_OP_REG_MR] = IB_WC_REG_MR,
@@ -199,4 +206,25 @@ int erdma_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 	spin_unlock_irqrestore(&cq->kern_cq.lock, flags);
 
 	return npolled;
+}
+
+enum hrtimer_restart cq_timer_fn(struct hrtimer *t)
+{
+	struct erdma_cq *cq = container_of(t, struct erdma_cq, dim.timer);
+
+	notify_cq(cq, (cq->dim.flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
+	cq->kern_cq.notify_cnt++;
+	cq->dim.flags = 0;
+
+	return HRTIMER_NORESTART;
+}
+
+#define DIM_OFF_THRESHOLD 3
+int erdma_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period)
+{
+	struct erdma_cq *cq = to_ecq(ibcq);
+
+	cq->dim.timeout = cq_period >= DIM_OFF_THRESHOLD ? cq_period : 0;
+
+	return 0;
 }

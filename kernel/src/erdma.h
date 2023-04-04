@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB */
+/* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
 
 /* Authors: Cheng Xu <chengyou@linux.alibaba.com> */
 /*          Kai Shen <kaishen@linux.alibaba.com> */
@@ -21,10 +21,6 @@
 #include "erdma_ioctl.h"
 #include "erdma_stats.h"
 
-#define ERDMA_MAJOR_VER 0
-#define ERDMA_MEDIUM_VER 2
-#define ERDMA_MINOR_VER 18
-
 #define DRV_MODULE_NAME "erdma"
 #define ERDMA_NODE_DESC "Elastic RDMA(iWARP) stack"
 
@@ -46,7 +42,7 @@ struct erdma_eq {
 	atomic64_t event_num;
 	atomic64_t notify_num;
 
-	u64 __iomem *db_addr;
+	void __iomem *db;
 	u64 *db_record;
 };
 
@@ -143,7 +139,10 @@ struct erdma_devattr {
 
 	int numa_node;
 	enum erdma_cc_alg cc;
+	u8 retrans_num;
+	u8 flags;
 	u32 grp_num;
+	u32 max_ceqs;
 	int irq_num;
 
 	bool disable_dwqe;
@@ -205,6 +204,7 @@ struct erdma_dev {
 	struct net_device *netdev;
 	struct pci_dev *pdev;
 	struct notifier_block netdev_nb;
+	struct workqueue_struct *reflush_wq;
 
 	resource_size_t func_bar_addr;
 	resource_size_t func_bar_len;
@@ -213,6 +213,7 @@ struct erdma_dev {
 	struct erdma_devattr attrs;
 	/* physical port state (only one port per device) */
 	enum ib_port_state state;
+	u32 mtu;
 
 	/* cmdq and aeq use the same msix vector */
 	struct erdma_irq comm_irq;
@@ -240,7 +241,7 @@ struct erdma_dev {
 	DECLARE_BITMAP(sdb_page, ERDMA_DWQE_TYPE0_CNT);
 	/*
 	 * We provide max 496 uContexts that each has one SQ normal Db,
-	 * and one directWQE db。
+	 * and one directWQE db.
 	 */
 	DECLARE_BITMAP(sdb_entry, ERDMA_DWQE_TYPE1_CNT);
 
@@ -250,6 +251,9 @@ struct erdma_dev {
 #ifndef HAVE_IB_DEVICE_GET_BY_NAME
 	struct list_head dev_list;
 #endif
+
+	struct dma_pool *db_pool;
+	struct dma_pool *resp_pool;
 };
 
 static inline void *get_queue_entry(void *qbuf, u32 idx, u32 depth, u32 shift)
@@ -297,7 +301,7 @@ void erdma_finish_cmdq_init(struct erdma_dev *dev);
 void erdma_cmdq_destroy(struct erdma_dev *dev);
 
 void erdma_cmdq_build_reqhdr(u64 *hdr, u32 mod, u32 op);
-int erdma_post_cmd_wait(struct erdma_cmdq *cmdq, u64 *req, u32 req_size,
+int erdma_post_cmd_wait(struct erdma_cmdq *cmdq, void *req, u32 req_size,
 			u64 *resp0, u64 *resp1);
 void erdma_cmdq_completion_handler(struct erdma_cmdq *cmdq);
 
@@ -314,42 +318,5 @@ void erdma_ceq_completion_handler(struct erdma_eq_cb *ceq_cb);
 
 void erdma_chrdev_destroy(void);
 int erdma_chrdev_init(void);
-
-#ifndef HAVE_XARRAY
-static inline int idr_alloc_cyclic_safe(struct idr *idr, int *id, void *ptr,
-					spinlock_t *lock, int *next, int max)
-{
-	unsigned long flags;
-	bool tried_twice = false;
-	int idx;
-
-idr_alloc:
-	spin_lock_irqsave(lock, flags);
-	idx = idr_alloc(idr, ptr, *next, max, GFP_NOWAIT);
-	spin_unlock_irqrestore(lock, flags);
-
-	if (idx >= 0) {
-		*id = idx;
-		*next = idx + 1;
-	} else {
-		if (!tried_twice && *next != 1) {
-			*next = 1;
-			tried_twice = true;
-			goto idr_alloc;
-		}
-	}
-
-	return idx >= 0 ? 0 : idx;
-}
-
-static inline void idr_remove_safe(struct idr *idr, int id, spinlock_t *lock)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(lock, flags);
-	idr_remove(idr, id);
-	spin_unlock_irqrestore(lock, flags);
-}
-#endif
 
 #endif

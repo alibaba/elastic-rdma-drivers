@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause */
+/* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
 
 /* Authors: Cheng Xu <chengyou@linux.alibaba.com> */
 /*          Kai Shen <kaishen@linux.alibaba.com> */
@@ -24,8 +24,8 @@
 #define MPA_KEY_SIZE 16
 #define MPA_DEFAULT_HDR_LEN 28
 
-#define COMPAT_PORT_BASE 0x7790
-
+#define COMPAT_PORT_BASE reserve_ports_base
+extern u16 reserve_ports_base;
 struct mpa_rr_params {
 	__be16 bits;
 	__be16 pd_len;

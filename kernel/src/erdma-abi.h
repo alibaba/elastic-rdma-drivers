@@ -11,8 +11,8 @@
 #define ERDMA_ABI_VERSION       1
 
 struct erdma_ureq_create_cq {
-	__u64 db_record_va;
-	__u64 qbuf_va;
+	__aligned_u64 db_record_va;
+	__aligned_u64 qbuf_va;
 	__u32 qbuf_len;
 	__u32 rsvd0;
 };
@@ -23,8 +23,8 @@ struct erdma_uresp_create_cq {
 };
 
 struct erdma_ureq_create_qp {
-	__u64 db_record_va;
-	__u64 qbuf_va;
+	__aligned_u64 db_record_va;
+	__aligned_u64 qbuf_va;
 	__u32 qbuf_len;
 	__u32 rsvd0;
 };
@@ -40,10 +40,13 @@ struct erdma_uresp_alloc_ctx {
 	__u32 dev_id;
 	__u32 pad;
 	__u32 sdb_type;
-	__u32 sdb_offset;
-	__u64 sdb;
-	__u64 rdb;
-	__u64 cdb;
+	__u32 sdb_entid;
+	__aligned_u64 sdb;
+	__aligned_u64 rdb;
+	__aligned_u64 cdb;
+	__u32 sdb_off;
+	__u32 rdb_off;
+	__u32 cdb_off;
 };
 
 #endif

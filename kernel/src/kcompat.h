@@ -11,10 +11,15 @@
 #ifndef __KCOMPAT_H__
 #define __KCOMPAT_H__
 
+#include <linux/pci.h>
 #include <linux/types.h>
 #include "config.h"
 
-#include <rdma/ib_user_ioctl_verbs.h>
+#define ERDMA_MAJOR_VER 0
+#define ERDMA_MEDIUM_VER 2
+#define ERDMA_MINOR_VER 35
+
+#include <rdma/ib_verbs.h>
 #ifndef RDMA_DRIVER_ERDMA
 #define RDMA_DRIVER_ERDMA 19
 #endif
@@ -222,8 +227,8 @@ static inline enum ib_mtu ib_mtu_int_to_enum(int mtu)
 #include <linux/sched/signal.h>
 #endif
 
-#ifndef IB_QP_CREATE_IWARP_WITHOUT_CM
-#define IB_QP_CREATE_IWARP_WITHOUT_CM (1 << 25)
+#ifndef HAVE_IB_QP_CREATE_IWARP_WITHOUT_CM
+#define IB_QP_CREATE_IWARP_WITHOUT_CM (1 << 27)
 #endif
 
 #ifndef HAVE_IWARP_OUTBOUND_QP_CREATE_FOR_SMC
@@ -254,6 +259,70 @@ struct ib_device *ib_device_get_by_name(const char *name,
 
 void ib_device_put(struct ib_device *device);
 
+#endif
+
+#ifndef HAVE_KREF_READ
+static inline int kref_read(const struct kref *kref)
+{
+	return atomic_read(&kref->refcount);
+}
+#endif
+
+#ifndef HAVE_XARRAY
+static inline int idr_alloc_cyclic_safe(struct idr *idr, int *id, void *ptr,
+					spinlock_t *lock, int *next, int max)
+{
+	bool tried_twice = false;
+	unsigned long flags;
+	int idx;
+
+idr_alloc:
+	spin_lock_irqsave(lock, flags);
+	idx = idr_alloc(idr, ptr, *next, max, GFP_NOWAIT);
+	spin_unlock_irqrestore(lock, flags);
+
+	if (idx >= 0) {
+		*id = idx;
+		*next = idx + 1;
+	} else {
+		if (!tried_twice && *next != 1) {
+			*next = 1;
+			tried_twice = true;
+			goto idr_alloc;
+		}
+	}
+
+	return idx >= 0 ? 0 : idx;
+}
+
+static inline void idr_remove_safe(struct idr *idr, int id, spinlock_t *lock)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(lock, flags);
+	idr_remove(idr, id);
+	spin_unlock_irqrestore(lock, flags);
+}
+#endif
+
+#ifndef HAVE_IB_UMEM_FIND_SINGLE_PG_SIZE
+static inline unsigned long ib_umem_find_best_pgsz(struct ib_umem *umem,
+						   unsigned long pgsz_bitmap,
+						   unsigned long virt)
+{
+	return PAGE_SIZE;
+}
+#endif
+
+#ifndef HAVE_IB_UMEM_NUM_DMA_BLOCKS
+#include <rdma/ib_umem.h>
+static inline size_t ib_umem_num_dma_blocks(struct ib_umem *umem,
+					    unsigned long pgsz)
+{
+	return (size_t)((ALIGN(umem->address + umem->length, pgsz) -
+			 ALIGN_DOWN(umem->address, pgsz))) /
+	       pgsz;
+}
 #endif
 
 #endif

@@ -100,8 +100,6 @@ ERDMA Source Code Directory Structure (under src/)
 | erdma_hw.h | Hardware related definitions. |
 | erdma_debug.h | Debug Related definitions. |
 | erdma_eq.c | Event Queue implementation. |
-| erdma_gdr.c erdma_p2p.[ch] | P2P memory and GDR implementation. |
-| nv-p2p.h | NVIDIA GDR API |
 | erdma_ioctl.[ch] | Userspace diag interface (IOCTL). |
 | erdma_stats.[ch] | Counter implementation to ib_core |
 | erdma-abi.h | Kernel driver <-> Userspace provider ABI. |

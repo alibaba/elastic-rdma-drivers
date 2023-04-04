@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause
+// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 
 /* Authors: Cheng Xu <chengyou@linux.alibaba.com> */
 /*          Kai Shen <kaishen@linux.alibaba.com> */
@@ -6,6 +6,8 @@
 /* Authors: Bernard Metzler <bmt@zurich.ibm.com> */
 /* Copyright (c) 2008-2019, IBM Corporation */
 
+#include "kcompat.h"
+#include "erdma_cm.h"
 #include "erdma_verbs.h"
 
 extern bool compat_mode;
@@ -21,7 +23,7 @@ void erdma_qp_llp_close(struct erdma_qp *qp)
 	case ERDMA_QP_STATE_RTR:
 	case ERDMA_QP_STATE_IDLE:
 	case ERDMA_QP_STATE_TERMINATE:
-		qp_attrs.state = ERDMA_QP_STATE_CLOSING;
+		qp_attrs.state = ERDMA_QP_STATE_ERROR;
 		erdma_modify_qp_internal(qp, &qp_attrs, ERDMA_QP_ATTR_STATE);
 		break;
 	case ERDMA_QP_STATE_CLOSING:
@@ -111,8 +113,7 @@ without_cep:
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_CC_MASK, qp->attrs.cc) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_QPN_MASK, QP_ID(qp));
 
-	return erdma_post_cmd_wait(&dev->cmdq, (u64 *)&req, sizeof(req), NULL,
-				   NULL);
+	return erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
 }
 
 static int erdma_modify_qp_state_to_rts_compat(struct erdma_qp *qp,
@@ -136,17 +137,17 @@ static int erdma_modify_qp_state_to_rts_compat(struct erdma_qp *qp,
 	req.sip = qp->attrs.laddr.in.sin_addr.s_addr;
 
 	if (req.dip < req.sip) {
-		req.dport = COMPAT_PORT_BASE +
-			    ((QP_ID(qp) >> 16) & 0xF);
+		req.dport = COMPAT_PORT_BASE + ((QP_ID(qp) >> 16) & 0xF);
 		req.sport = QP_ID(qp);
-	} else if (req.dip == req.sip) { /* if dip == sip, must have lqpn != rqpn */
+	} else if (req.dip ==
+		   req.sip) { /* if dip == sip, must have lqpn != rqpn */
 		if (QP_ID(qp) < qp->attrs.remote_qp_num) {
-			req.dport = COMPAT_PORT_BASE +
-				((QP_ID(qp) >> 16) & 0xF);
+			req.dport =
+				COMPAT_PORT_BASE + ((QP_ID(qp) >> 16) & 0xF);
 			req.sport = QP_ID(qp);
 		} else {
 			req.sport = COMPAT_PORT_BASE +
-				((qp->attrs.remote_qp_num >> 16) & 0xF);
+				    ((qp->attrs.remote_qp_num >> 16) & 0xF);
 			req.dport = qp->attrs.remote_qp_num;
 		}
 	} else {
@@ -158,8 +159,7 @@ static int erdma_modify_qp_state_to_rts_compat(struct erdma_qp *qp,
 	req.send_nxt = req.sport * 4;
 	req.recv_nxt = req.dport * 4;
 
-	return erdma_post_cmd_wait(&dev->cmdq, (u64 *)&req, sizeof(req), NULL,
-				   NULL);
+	return erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
 }
 
 static int erdma_modify_qp_state_to_stop(struct erdma_qp *qp,
@@ -177,14 +177,14 @@ static int erdma_modify_qp_state_to_stop(struct erdma_qp *qp,
 	req.cfg = FIELD_PREP(ERDMA_CMD_MODIFY_QP_STATE_MASK, attrs->state) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_QPN_MASK, QP_ID(qp));
 
-	return erdma_post_cmd_wait(&dev->cmdq, (u64 *)&req, sizeof(req), NULL,
-				   NULL);
+	return erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
 }
 
 int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 			     enum erdma_qp_attr_mask mask)
 {
 	int drop_conn, ret = 0;
+	bool need_reflush = false;
 
 	if (!mask)
 		return 0;
@@ -197,9 +197,11 @@ int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 	case ERDMA_QP_STATE_RTR:
 		if (attrs->state == ERDMA_QP_STATE_RTS) {
 			if (compat_mode)
-				ret = erdma_modify_qp_state_to_rts_compat(qp, attrs, mask);
+				ret = erdma_modify_qp_state_to_rts_compat(
+					qp, attrs, mask);
 			else
-				ret = erdma_modify_qp_state_to_rts(qp, attrs, mask);
+				ret = erdma_modify_qp_state_to_rts(qp, attrs,
+								   mask);
 		} else if (attrs->state == ERDMA_QP_STATE_ERROR) {
 			qp->attrs.state = ERDMA_QP_STATE_ERROR;
 			if (qp->cep) {
@@ -208,6 +210,13 @@ int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 			}
 
 			ret = erdma_modify_qp_state_to_stop(qp, attrs, mask);
+			/* We apply to kernel qp first. */
+#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+			if (rdma_is_kernel_res(&qp->ibqp.res))
+#else
+			if (!qp->user)
+#endif
+				need_reflush = true;
 		}
 		break;
 	case ERDMA_QP_STATE_RTS:
@@ -218,7 +227,15 @@ int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 		    attrs->state == ERDMA_QP_STATE_ERROR) {
 			drop_conn = 1;
 			if (!(qp->attrs.flags & ERDMA_QP_IN_DESTROY))
-				ret = erdma_modify_qp_state_to_stop(qp, attrs, mask);
+				ret = erdma_modify_qp_state_to_stop(qp, attrs,
+								    mask);
+			/* We apply to kernel qp first. */
+#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+			if (rdma_is_kernel_res(&qp->ibqp.res))
+#else
+			if (!qp->user)
+#endif
+				need_reflush = true;
 		}
 
 		if (drop_conn)
@@ -241,6 +258,12 @@ int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 		break;
 	default:
 		break;
+	}
+
+	if (need_reflush && !ret) {
+		qp->flags |= ERDMA_QP_IN_FLUSHING;
+		mod_delayed_work(qp->dev->reflush_wq, &qp->reflush_dwork,
+				 usecs_to_jiffies(100));
 	}
 
 	return ret;
@@ -302,7 +325,7 @@ static int fill_inline_data(struct erdma_qp *qp,
 					       qp->attrs.sq_size, SQEBB_SHIFT);
 			if (!remain_size)
 				break;
-		};
+		}
 
 		i++;
 	}
@@ -465,7 +488,7 @@ static int erdma_push_one_sqe(struct erdma_qp *qp, u16 *pi,
 			FIELD_PREP(ERDMA_SQE_MR_MTT_CNT_MASK,
 				   mr->mem.mtt_nents);
 
-		if (mr->mem.mtt_nents < ERDMA_MAX_INLINE_MTT_ENTRIES) {
+		if (mr->mem.mtt_nents <= ERDMA_MAX_INLINE_MTT_ENTRIES) {
 			attrs |= FIELD_PREP(ERDMA_SQE_MR_MTT_TYPE_MASK, 0);
 			/* Copy SGLs to SQE content to accelerate */
 			memcpy(get_queue_entry(qp->kern_qp.sq_buf, idx + 1,
@@ -528,11 +551,11 @@ static void kick_sq_db(struct erdma_qp *qp, u16 pi)
 }
 
 #ifdef HAVE_POST_CONST_WR
-static int erdma_post_send_internal(struct ib_qp *ibqp, const struct ib_send_wr *send_wr,
-		    const struct ib_send_wr **bad_send_wr, bool is_last)
+int erdma_post_send(struct ib_qp *ibqp, const struct ib_send_wr *send_wr,
+		    const struct ib_send_wr **bad_send_wr)
 #else
-static int erdma_post_send_internal(struct ib_qp *ibqp, struct ib_send_wr *send_wr,
-		    struct ib_send_wr **bad_send_wr, bool is_last)
+int erdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *send_wr,
+		    struct ib_send_wr **bad_send_wr)
 #endif
 {
 	struct erdma_qp *qp = to_eqp(ibqp);
@@ -545,14 +568,6 @@ static int erdma_post_send_internal(struct ib_qp *ibqp, struct ib_send_wr *send_
 		return -EINVAL;
 
 	spin_lock_irqsave(&qp->kern_qp.sq_lock, flags);
-	if (unlikely(qp->kern_qp.sq_shutdown)) {
-		*bad_send_wr = send_wr;
-		ret = -EINVAL;
-		goto out;
-	}
-	if (unlikely(is_last))
-		qp->kern_qp.sq_shutdown = true;
-
 	sq_pi = qp->kern_qp.sq_pi;
 
 	while (wr) {
@@ -572,21 +587,13 @@ static int erdma_post_send_internal(struct ib_qp *ibqp, struct ib_send_wr *send_
 
 		wr = wr->next;
 	}
-out:
 	spin_unlock_irqrestore(&qp->kern_qp.sq_lock, flags);
 
-	return ret;
-}
+	if (unlikely(qp->flags & ERDMA_QP_IN_FLUSHING))
+		mod_delayed_work(qp->dev->reflush_wq, &qp->reflush_dwork,
+				 usecs_to_jiffies(100));
 
-#ifdef HAVE_POST_CONST_WR
-int erdma_post_send(struct ib_qp *ibqp, const struct ib_send_wr *send_wr,
-		    const struct ib_send_wr **bad_send_wr)
-#else
-int erdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *send_wr,
-		    struct ib_send_wr **bad_send_wr)
-#endif
-{
-	return erdma_post_send_internal(ibqp, send_wr, bad_send_wr, false);
+	return ret;
 }
 
 static int erdma_post_recv_one(struct erdma_qp *qp,
@@ -620,11 +627,11 @@ static int erdma_post_recv_one(struct erdma_qp *qp,
 }
 
 #ifdef HAVE_POST_CONST_WR
-static int erdma_post_recv_internal(struct ib_qp *ibqp, const struct ib_recv_wr *recv_wr,
-		    const struct ib_recv_wr **bad_recv_wr, bool is_last)
+int erdma_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *recv_wr,
+		    const struct ib_recv_wr **bad_recv_wr)
 #else
-static int erdma_post_recv_internal(struct ib_qp *ibqp, struct ib_recv_wr *recv_wr,
-		    struct ib_recv_wr **bad_recv_wr, bool is_last)
+int erdma_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *recv_wr,
+		    struct ib_recv_wr **bad_recv_wr)
 #endif
 {
 	const struct ib_recv_wr *wr = recv_wr;
@@ -633,13 +640,6 @@ static int erdma_post_recv_internal(struct ib_qp *ibqp, struct ib_recv_wr *recv_
 	int ret = 0;
 
 	spin_lock_irqsave(&qp->kern_qp.rq_lock, flags);
-	if (unlikely(qp->kern_qp.rq_shutdown)) {
-		*bad_recv_wr = recv_wr;
-		ret = -EINVAL;
-		goto out;
-	}
-	if (unlikely(is_last))
-		qp->kern_qp.rq_shutdown = true;
 
 	while (wr) {
 		ret = erdma_post_recv_one(qp, wr);
@@ -649,102 +649,12 @@ static int erdma_post_recv_internal(struct ib_qp *ibqp, struct ib_recv_wr *recv_
 		}
 		wr = wr->next;
 	}
-out:
+
 	spin_unlock_irqrestore(&qp->kern_qp.rq_lock, flags);
+
+	if (unlikely(qp->flags & ERDMA_QP_IN_FLUSHING))
+		mod_delayed_work(qp->dev->reflush_wq, &qp->reflush_dwork,
+				 usecs_to_jiffies(100));
+
 	return ret;
-}
-
-#ifdef HAVE_POST_CONST_WR
-int erdma_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *recv_wr,
-		    const struct ib_recv_wr **bad_recv_wr)
-#else
-int erdma_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *recv_wr,
-		    struct ib_recv_wr **bad_recv_wr)
-#endif
-{
-	return erdma_post_recv_internal(ibqp, recv_wr, bad_recv_wr, false);
-}
-
-struct ib_drain_cqe {
-	struct ib_cqe cqe;
-	struct completion done;
-};
-
-static void ib_drain_qp_done(struct ib_cq *cq, struct ib_wc *wc)
-{
-	struct ib_drain_cqe *cqe = container_of(wc->wr_cqe, struct ib_drain_cqe,
-						cqe);
-
-	complete(&cqe->done);
-}
-
-static void erdma_drain_qp(struct ib_qp *qp)
-{
-	struct ib_drain_cqe sdrain;
-	struct ib_drain_cqe rdrain;
-	struct ib_recv_wr rwr = {};
-	struct ib_qp_attr attr = { .qp_state = IB_QPS_ERR };
-	struct ib_rdma_wr swr = {
-		.wr = {
-			.next = NULL,
-			{ .wr_cqe   = &sdrain.cqe, },
-			.opcode = IB_WR_RDMA_WRITE,
-			.send_flags = IB_SEND_SIGNALED,
-		},
-	};
-	int ret;
-	int cnt;
-
-	rwr.wr_cqe = &rdrain.cqe;
-	rdrain.cqe.done = ib_drain_qp_done;
-	init_completion(&rdrain.done);
-
-	ret = erdma_post_recv_internal(qp, &rwr, NULL, true);
-	if (ret) {
-		WARN_ONCE(ret, "failed to drain recv queue: %d", ret);
-		return;
-	}
-
-	sdrain.cqe.done = ib_drain_qp_done;
-	init_completion(&sdrain.done);
-
-	ret = erdma_post_send_internal(qp, &swr.wr, NULL, true);
-	if (ret) {
-		WARN_ONCE(ret, "failed to drain send queue: %d", ret);
-		return;
-	}
-
-	ret = ib_modify_qp(qp, &attr, IB_QP_STATE);
-	if (ret) {
-		WARN_ONCE(ret, "failed to modify qp to ERR: %d", ret);
-		return;
-	}
-
-	cnt = 0;
-	while (wait_for_completion_timeout(&sdrain.done, HZ / 10) <= 0 && cnt < 50) {
-		ib_process_cq_direct(qp->send_cq, -1);
-		cnt++;
-	}
-
-	cnt = 0;
-	while (wait_for_completion_timeout(&rdrain.done, HZ / 10) <= 0 && cnt < 50) {
-		ib_process_cq_direct(qp->recv_cq, -1);
-		cnt++;
-	}
-}
-
-void erdma_drain_rq(struct ib_qp *ibqp)
-{
-	struct erdma_qp *qp = to_eqp(ibqp);
-
-	if (qp->attrs.state != ERDMA_QP_STATE_ERROR)
-		erdma_drain_qp(ibqp);
-}
-
-void erdma_drain_sq(struct ib_qp *ibqp)
-{
-	struct erdma_qp *qp = to_eqp(ibqp);
-
-	if (qp->attrs.state != ERDMA_QP_STATE_ERROR)
-		erdma_drain_qp(ibqp);
 }

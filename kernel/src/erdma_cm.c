@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 or BSD-3-Clause
+// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 
 /* Authors: Cheng Xu <chengyou@linux.alibaba.com> */
 /*          Kai Shen <kaishen@linux.alibaba.com> */
@@ -10,8 +10,6 @@
 /* Copyright (c) 2008-2019, IBM Corporation */
 /* Copyright (c) 2017, Open Grid Computing, Inc. */
 
-#include <linux/errno.h>
-#include <linux/types.h>
 #include <linux/workqueue.h>
 
 #include "erdma.h"
@@ -312,11 +310,9 @@ void erdma_qp_cm_drop(struct erdma_qp *qp)
 			erdma_cm_upcall(cep, IW_CM_EVENT_CONNECT_REPLY,
 					-EINVAL);
 			break;
-
 		case ERDMA_EPSTATE_RDMA_MODE:
 			erdma_cm_upcall(cep, IW_CM_EVENT_CLOSE, 0);
 			break;
-
 		case ERDMA_EPSTATE_IDLE:
 		case ERDMA_EPSTATE_LISTENING:
 		case ERDMA_EPSTATE_CONNECTING:
@@ -352,7 +348,6 @@ void erdma_cep_put(struct erdma_cep *cep)
 	       kref_read(&cep->ref) - 1);
 
 	WARN_ON(kref_read(&cep->ref) < 1);
-
 	kref_put(&cep->ref, __erdma_cep_dealloc);
 }
 
@@ -612,14 +607,10 @@ static int erdma_proc_mpareply(struct erdma_cep *cep)
 	int ret;
 
 	ret = erdma_recv_mpa_rr(cep);
-	if (ret) {
-		if (ret != -EAGAIN) {
-			erdma_cancel_mpatimer(cep);
-			goto out_err;
-		} else {
-			return ret;
-		}
-	}
+	if (ret)
+		goto out_err;
+
+	erdma_cancel_mpatimer(cep);
 
 	rep = &cep->mpa.hdr;
 
@@ -672,7 +663,9 @@ static int erdma_proc_mpareply(struct erdma_cep *cep)
 	}
 
 out_err:
-	erdma_cm_upcall(cep, IW_CM_EVENT_CONNECT_REPLY, -EINVAL);
+	if (ret != -EAGAIN)
+		erdma_cm_upcall(cep, IW_CM_EVENT_CONNECT_REPLY, -EINVAL);
+
 	return ret;
 }
 

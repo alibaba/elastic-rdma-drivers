@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 
 /* Authors: Cheng Xu <chengyou@linux.alibaba.com> */
 /*          Kai Shen <kaishen@linux.alibaba.com> */
@@ -14,7 +14,7 @@ void notify_eq(struct erdma_eq *eq)
 		      FIELD_PREP(ERDMA_EQDB_ARM_MASK, 1);
 
 	*eq->db_record = db_data;
-	writeq(db_data, eq->db_addr);
+	writeq(db_data, eq->db);
 
 	atomic64_inc(&eq->notify_num);
 }
@@ -98,7 +98,7 @@ int erdma_aeq_init(struct erdma_dev *dev)
 	atomic64_set(&eq->event_num, 0);
 	atomic64_set(&eq->notify_num, 0);
 
-	eq->db_addr = (u64 __iomem *)(dev->func_bar + ERDMA_REGS_AEQ_DB_REG);
+	eq->db = dev->func_bar + ERDMA_REGS_AEQ_DB_REG;
 	eq->db_record = (u64 *)(eq->qbuf + buf_size);
 
 	erdma_reg_write32(dev, ERDMA_REGS_AEQ_ADDR_H_REG,
@@ -227,7 +227,7 @@ static int create_eq_cmd(struct erdma_dev *dev, u32 eqn, struct erdma_eq *eq)
 	req.db_dma_addr_l = lower_32_bits(db_info_dma_addr);
 	req.db_dma_addr_h = upper_32_bits(db_info_dma_addr);
 
-	return erdma_post_cmd_wait(&dev->cmdq, (u64 *)&req,
+	return erdma_post_cmd_wait(&dev->cmdq, &req,
 				   sizeof(struct erdma_cmdq_create_eq_req),
 				   NULL, NULL);
 }
@@ -249,9 +249,8 @@ static int erdma_ceq_init_one(struct erdma_dev *dev, u16 ceqn)
 	atomic64_set(&eq->notify_num, 0);
 
 	eq->depth = ERDMA_DEFAULT_EQ_DEPTH;
-	eq->db_addr =
-		(u64 __iomem *)(dev->func_bar + ERDMA_REGS_CEQ_DB_BASE_REG +
-				(ceqn + 1) * ERDMA_DB_SIZE);
+	eq->db = dev->func_bar + ERDMA_REGS_CEQ_DB_BASE_REG +
+		 (ceqn + 1) * ERDMA_DB_SIZE;
 	eq->db_record = (u64 *)(eq->qbuf + buf_size);
 	eq->ci = 0;
 	dev->ceqs[ceqn].dev = dev;
@@ -279,8 +278,7 @@ static void erdma_ceq_uninit_one(struct erdma_dev *dev, u16 ceqn)
 	req.qtype = ERDMA_EQ_TYPE_CEQ;
 	req.vector_idx = ceqn + 1;
 
-	err = erdma_post_cmd_wait(&dev->cmdq, (u64 *)&req, sizeof(req), NULL,
-				  NULL);
+	err = erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
 	if (err)
 		return;
 
@@ -290,10 +288,24 @@ static void erdma_ceq_uninit_one(struct erdma_dev *dev, u16 ceqn)
 
 int erdma_ceqs_init(struct erdma_dev *dev)
 {
+	u64 req_hdr, cap0, cap1;
 	u32 i, j;
 	int err;
 
-	for (i = 0; i < dev->attrs.irq_num - 1; i++) {
+	erdma_cmdq_build_reqhdr(&req_hdr, CMDQ_SUBMOD_RDMA,
+				CMDQ_OPCODE_QUERY_DEVICE);
+
+	err = erdma_post_cmd_wait(&dev->cmdq, &req_hdr, sizeof(req_hdr), &cap0,
+				  &cap1);
+	if (err)
+		return err;
+
+#define ERDMA_GET_CAP(name, cap) FIELD_GET(ERDMA_CMD_DEV_CAP_##name##_MASK, cap)
+
+	dev->attrs.max_ceqs =
+		min((size_t)8 * (size_t)ERDMA_GET_CAP(QBLOCK, cap1), (size_t)dev->attrs.irq_num);
+
+	for (i = 0; i < dev->attrs.max_ceqs - 1; i++) {
 		err = erdma_ceq_init_one(dev, i);
 		if (err)
 			goto out_err;
@@ -320,7 +332,7 @@ void erdma_ceqs_uninit(struct erdma_dev *dev)
 {
 	u32 i;
 
-	for (i = 0; i < dev->attrs.irq_num - 1; i++) {
+	for (i = 0; i < dev->attrs.max_ceqs - 1; i++) {
 		erdma_free_ceq_irq(dev, i);
 		erdma_ceq_uninit_one(dev, i);
 	}

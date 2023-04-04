@@ -9,9 +9,6 @@ list(APPEND erdma_sources
   erdma_verbs.h erdma-abi.h erdma.h erdma_cmdq.c kcompat.h
   erdma_stats.h erdma_stats.c
   )
-if(ENABLE_P2P)
-  list(APPEND erdma_sources erdma_p2p.c erdma_gdr.c erdma_p2p.h nv-p2p.h)
-endif()
 
 string(REPLACE ";" " " erdma_sources_string "${erdma_sources}")
 configure_file(Kbuild.in Kbuild @ONLY)
@@ -22,11 +19,6 @@ endforeach()
 
 # Generate config.h
 include(${CMAKE_SOURCE_DIR}/config/erdma.cmake)
-
-if(ENABLE_P2P)
-  message("-- ERDMA peer-to-peer memory enabled")
-  config_define(HAVE_ERDMA_P2P)
-endif()
 
 if(ENABLE_CM_NO_BOUND_IF)
   message("-- ERDMA cm bound no IF")

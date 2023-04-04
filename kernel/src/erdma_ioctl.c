@@ -5,14 +5,16 @@
 
 #include <linux/cdev.h>
 #include <linux/sched.h>
-
-#include "erdma_ioctl.h"
-#include "erdma_verbs.h"
 #ifdef HAVE_HEADER_LINUX_SCHED_TASK
 #include <linux/sched/task.h>
 #endif
 #include <linux/mm.h>
 #include <rdma/ib_umem.h>
+
+#include "erdma.h"
+#include "erdma_cm.h"
+#include "erdma_ioctl.h"
+#include "erdma_verbs.h"
 
 static struct class *erdma_chrdev_class;
 static struct cdev erdma_cdev;
@@ -20,6 +22,67 @@ static struct device *erdma_chrdev;
 static dev_t erdma_char_dev;
 
 #define ERDMA_CHRDEV_NAME "erdma"
+
+static int erdma_query_resource(struct erdma_dev *dev, u32 mod, u32 op,
+				u32 index, void *out, u32 len)
+{
+	struct erdma_cmdq_query_req req;
+	dma_addr_t dma_addr;
+	void *resp;
+	int err;
+
+	erdma_cmdq_build_reqhdr(&req.hdr, mod, op);
+
+	resp = dma_pool_alloc(dev->resp_pool, GFP_KERNEL, &dma_addr);
+	if (!resp)
+		return -ENOMEM;
+
+	req.index = index;
+	req.target_addr = dma_addr;
+	req.target_length = ERDMA_HW_RESP_SIZE;
+
+	err = erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
+	if (err)
+		goto out;
+
+	if (out)
+		memcpy(out, resp, len);
+
+out:
+	dma_pool_free(dev->resp_pool, resp, dma_addr);
+
+	return err;
+}
+
+static int erdma_query_qpc(struct erdma_dev *dev, u32 qpn, void *out)
+{
+	BUILD_BUG_ON(sizeof(struct erdma_cmdq_query_qpc_resp) >
+		     ERDMA_HW_RESP_SIZE);
+
+	return erdma_query_resource(dev, CMDQ_SUBMOD_RDMA,
+				    CMDQ_OPCODE_QUERY_QPC, qpn, out,
+				    sizeof(struct erdma_cmdq_query_qpc_resp));
+}
+
+static int erdma_query_cqc(struct erdma_dev *dev, u32 cqn, void *out)
+{
+	BUILD_BUG_ON(sizeof(struct erdma_cmdq_query_cqc_resp) >
+		     ERDMA_HW_RESP_SIZE);
+
+	return erdma_query_resource(dev, CMDQ_SUBMOD_RDMA,
+				    CMDQ_OPCODE_QUERY_CQC, cqn, out,
+				    sizeof(struct erdma_cmdq_query_cqc_resp));
+}
+
+static int erdma_query_eqc(struct erdma_dev *dev, u32 eqn, void *out)
+{
+	BUILD_BUG_ON(sizeof(struct erdma_cmdq_query_eqc_resp) >
+		     ERDMA_HW_RESP_SIZE);
+
+	return erdma_query_resource(dev, CMDQ_SUBMOD_COMMON,
+				    CMDQ_OPCODE_QUERY_EQC, eqn, out,
+				    sizeof(struct erdma_cmdq_query_eqc_resp));
+}
 
 static int erdma_ioctl_conf_cmd(struct erdma_dev *edev,
 				struct erdma_ioctl_msg *msg)
@@ -36,20 +99,47 @@ static int erdma_ioctl_conf_cmd(struct erdma_dev *edev,
 			dprint_mask = msg->in.config_req.value;
 		else
 			msg->out.config_resp.value = dprint_mask;
+	} else if (msg->in.opcode == ERDMA_CONFIG_TYPE_RETRANS_NUM) {
+		if (msg->in.config_req.is_set)
+			ret = erdma_set_retrans_num(edev, msg->in.config_req.value);
+		else
+			msg->out.config_resp.value = edev->attrs.retrans_num;
 	}
 
 	msg->out.length = 4;
 	return ret;
 }
 
-static void fill_eq_info(struct erdma_eq_info *info, struct erdma_eq *eq)
+static void fill_eq_info(struct erdma_dev *dev, struct erdma_eq_info *info,
+			 struct erdma_eq *eq)
 {
+	struct erdma_cmdq_query_eqc_resp resp;
+	int ret;
+
 	info->event_cnt = atomic64_read(&eq->event_num);
 	info->notify_cnt = atomic64_read(&eq->notify_num);
 	info->depth = eq->depth;
 	info->ci = eq->ci;
 	info->qbuf_dma = eq->qbuf_dma_addr;
 	info->qbuf_va = (u64)eq->qbuf;
+	info->hw_info_valid = 0;
+
+	ret = erdma_query_eqc(dev, info->eqn, &resp);
+	if (ret)
+		return;
+
+	info->hw_info_valid = 1;
+	info->hw_depth = resp.depth;
+	info->vector = resp.vector;
+	info->int_suppression = resp.int_suppression;
+	info->tail_owner = resp.tail_owner;
+	info->head_owner = resp.head_owner;
+	info->overflow = resp.overflow;
+	info->head = resp.head;
+	info->tail = resp.tail;
+	info->cn_addr = resp.cn_addr;
+	info->cn_db_addr = resp.cn_db_addr;
+	info->eq_db_record = resp.eq_db_record;
 }
 
 static void show_cep_info(struct erdma_dev *edev)
@@ -77,14 +167,28 @@ static void show_cep_info(struct erdma_dev *edev)
 	}
 }
 
-static int show_cq_info(struct erdma_dev *dev, u32 cqn,
+static int fill_cq_info(struct erdma_dev *dev, u32 cqn,
 			struct erdma_ioctl_msg *msg)
 {
 	struct erdma_cq_info *info = &msg->out.cq_info;
+	struct erdma_cmdq_query_cqc_resp resp;
 #ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
 	struct rdma_restrack_entry *res;
 #endif
 	struct erdma_cq *cq;
+	int ret;
+
+	if (cqn == 0) {
+		info->cqn = 0;
+		info->depth = dev->cmdq.cq.depth;
+		info->assoc_eqn = 0;
+		info->qbuf_dma_addr = dev->cmdq.cq.qbuf_dma_addr;
+		info->ci = dev->cmdq.cq.ci;
+		info->cmdsn = dev->cmdq.cq.cmdsn;
+		info->notify_cnt = atomic64_read(&dev->cmdq.cq.armed_num);
+
+		goto query_hw_cqc;
+	}
 
 	cq = find_cq_by_cqn(dev, cqn);
 	if (!cq)
@@ -102,8 +206,40 @@ static int show_cq_info(struct erdma_dev *dev, u32 cqn,
 #endif
 
 	if (info->is_user) {
-
+		info->mtt.page_size = cq->user_cq.qbuf_mtt.page_size;
+		info->mtt.page_offset = cq->user_cq.qbuf_mtt.page_offset;
+		info->mtt.page_cnt = cq->user_cq.qbuf_mtt.page_cnt;
+		info->mtt.mtt_nents = cq->user_cq.qbuf_mtt.mtt_nents;
+		memcpy(info->mtt.mtt_entry, cq->user_cq.qbuf_mtt.mtt_entry,
+		       ERDMA_MAX_INLINE_MTT_ENTRIES * sizeof(__u64));
+		info->mtt.va = cq->user_cq.qbuf_mtt.va;
+		info->mtt.len = cq->user_cq.qbuf_mtt.len;
+		info->mtt_type = cq->user_cq.qbuf_mtt.mtt_type;
+	} else {
+		info->qbuf_dma_addr = cq->kern_cq.qbuf_dma_addr;
+		info->ci = cq->kern_cq.ci;
+		info->cmdsn = cq->kern_cq.cmdsn;
+		info->notify_cnt = cq->kern_cq.notify_cnt;
 	}
+
+	info->hw_info_valid = 0;
+
+query_hw_cqc:
+	ret = erdma_query_cqc(dev, cqn, &resp);
+	if (ret)
+		return 0;
+
+	info->hw_info_valid = 1;
+	info->hw_pi = resp.pi;
+	info->enable = resp.q_en;
+	info->log_depth = resp.log_depth;
+	info->cq_cur_ownership = resp.cq_cur_ownership;
+	info->last_errdb_type = resp.last_errdb_type;
+	info->last_errdb_ci = resp.last_errdb_ci;
+	info->out_order_db_cnt = resp.out_order_db_cnt;
+	info->dup_db_cnt = resp.dup_db_cnt;
+	info->cn_cq_db_addr = resp.cn_cq_db_addr;
+	info->cq_db_record = resp.cq_db_record;
 
 #if 0
 	pr_info("cqn:%u, hw_reported_cnt:%llx, sw_reported_cnt:%llx.\n", cqn,
@@ -124,19 +260,172 @@ static int erdma_ioctl_ver_cmd(struct erdma_dev *edev,
 	return 0;
 }
 
-static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
-				struct erdma_ioctl_msg *msg)
+static int erdma_fill_qp_info(struct erdma_dev *dev, u32 qpn,
+			      struct erdma_qp_info *qp_info)
 {
-	int ret = 0;
-	struct erdma_qp *qp;
-	struct erdma_qp_info *qp_info;
+	struct erdma_cmdq_query_qpc_resp resp;
 #ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
 	struct rdma_restrack_entry *res;
 #endif
-	int count = 0;
 	struct erdma_mem *mtt;
-	int i;
+	struct erdma_qp *qp;
+	int i, ret;
+
+	if (qpn == 0)
+		goto query_hw_qpc;
+
+	qp = find_qp_by_qpn(dev, qpn);
+	if (!qp)
+		return -EINVAL;
+	erdma_qp_get(qp);
+
+	qp_info->hw_info_valid = 0;
+	qp_info->qpn = qp->ibqp.qp_num;
+	qp_info->qp_state = qp->attrs.state;
+	qp_info->ref_cnt = kref_read(&qp->ref);
+	qp_info->qtype = qp->attrs.qp_type;
+	qp_info->sq_depth = qp->attrs.sq_size;
+	qp_info->rq_depth = qp->attrs.rq_size;
+	qp_info->cookie = qp->attrs.remote_cookie;
+	qp_info->cc = qp->attrs.cc;
+	qp_info->assoc_scqn = qp->scq->cqn;
+	qp_info->assoc_rcqn = qp->rcq->cqn;
+
+	if (qp->cep && qp->cep->cm_id) {
+		struct erdma_cep *cep = qp->cep;
+		struct iw_cm_id *id = cep->cm_id;
+		struct sockaddr_storage remote_addr;
+		struct sockaddr_storage local_addr;
+
+		qp_info->sip =
+			ntohl(to_sockaddr_in(id->local_addr).sin_addr.s_addr);
+		qp_info->dip =
+			ntohl(to_sockaddr_in(id->remote_addr).sin_addr.s_addr);
+		qp_info->sport = ntohs(to_sockaddr_in(id->local_addr).sin_port);
+		qp_info->dport =
+			ntohs(to_sockaddr_in(id->remote_addr).sin_port);
+
+		if (cep->sock) {
+			getname_local(cep->sock, &local_addr);
+			getname_peer(cep->sock, &remote_addr);
+			qp_info->origin_sport =
+				ntohs(to_sockaddr_in(local_addr).sin_port);
+			qp_info->sip = ntohl(
+				to_sockaddr_in(local_addr).sin_addr.s_addr);
+		}
+	}
+
+#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+	res = &qp->ibqp.res;
+	qp_info->is_user = !rdma_is_kernel_res(res);
+	if (qp_info->is_user) {
+		qp_info->pid = res->task->pid;
+		get_task_comm(qp_info->buf, res->task);
+#else
+	qp_info->is_user = qp->user;
+	if (qp->user) {
+#endif
+		mtt = &qp->user_qp.sq_mtt;
+		qp_info->sq_mtt_type = mtt->mtt_type;
+		qp_info->sq_mtt.page_size = mtt->page_size;
+		qp_info->sq_mtt.page_offset = mtt->page_offset;
+		qp_info->sq_mtt.page_cnt = mtt->page_cnt;
+		qp_info->sq_mtt.mtt_nents = mtt->mtt_nents;
+		qp_info->sq_mtt.va = mtt->va;
+		qp_info->sq_mtt.len = mtt->len;
+		for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
+			qp_info->sq_mtt.mtt_entry[i] = mtt->mtt_entry[i];
+
+		mtt = &qp->user_qp.rq_mtt;
+		qp_info->rq_mtt_type = mtt->mtt_type;
+		qp_info->rq_mtt.page_size = mtt->page_size;
+		qp_info->rq_mtt.page_offset = mtt->page_offset;
+		qp_info->rq_mtt.page_cnt = mtt->page_cnt;
+		qp_info->rq_mtt.mtt_nents = mtt->mtt_nents;
+		qp_info->rq_mtt.va = mtt->va;
+		qp_info->rq_mtt.len = mtt->len;
+		for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
+			qp_info->rq_mtt.mtt_entry[i] = mtt->mtt_entry[i];
+	} else {
+		qp_info->sqci = qp->kern_qp.sq_ci;
+		qp_info->sqpi = qp->kern_qp.sq_pi;
+		qp_info->rqci = qp->kern_qp.rq_ci;
+		qp_info->rqpi = qp->kern_qp.rq_pi;
+
+		qp_info->sqbuf_dma = qp->kern_qp.sq_buf_dma_addr;
+		qp_info->rqbuf_dma = qp->kern_qp.rq_buf_dma_addr;
+		qp_info->sqdbrec_dma = qp->kern_qp.sq_db_info_dma_addr;
+		qp_info->rqdbrec_dma = qp->kern_qp.rq_db_info_dma_addr;
+	}
+
+	erdma_qp_put(qp);
+
+query_hw_qpc:
+	ret = erdma_query_qpc(dev, qpn, &resp);
+	if (ret)
+		return 0;
+
+	qp_info->hw_info_valid = 1;
+	qp_info->sq_enable = resp.qpc[0].status;
+	qp_info->sqbuf_page_offset = resp.qpc[0].qbuf_page_offset;
+	qp_info->sqbuf_page_size = resp.qpc[0].qbuf_page_size;
+	qp_info->sqbuf_depth = resp.qpc[0].qbuf_depth;
+	qp_info->hw_sq_ci = resp.qpc[0].hw_ci;
+	qp_info->hw_sq_pi = resp.qpc[0].hw_pi;
+
+	qp_info->rq_enable = resp.qpc[1].status;
+	qp_info->rqbuf_page_offset = resp.qpc[1].qbuf_page_offset;
+	qp_info->rqbuf_page_size = resp.qpc[1].qbuf_page_size;
+	qp_info->rqbuf_depth = resp.qpc[1].qbuf_depth;
+	qp_info->hw_rq_ci = resp.qpc[1].hw_ci;
+	qp_info->hw_rq_pi = resp.qpc[1].hw_pi;
+	qp_info->last_comp_sqe_idx = resp.last_comp_sqe_idx;
+	qp_info->last_comp_rqe_idx = resp.last_comp_rqe_idx;
+	qp_info->scqe_counter = resp.scqe_counter;
+	qp_info->rcqe_counter = resp.rcqe_counter;
+	qp_info->tx_pkts_cnt = resp.tx_pkts_cnt;
+	qp_info->rx_pkts_cnt = resp.rx_pkts_cnt;
+	qp_info->rx_error_drop_cnt = resp.rx_error_drop_cnt;
+	qp_info->rx_invalid_drop_cnt = resp.rx_invalid_drop_cnt;
+	qp_info->rto_retrans_cnt = resp.rto_retrans_cnt;
+	qp_info->pd = resp.pd;
+	qp_info->fw_sq_pi = resp.fw_sq_pi;
+	qp_info->fw_sq_ci = resp.fw_sq_ci;
+	qp_info->fw_rq_ci = resp.fw_rq_ci;
+	qp_info->sq_in_flush = resp.sq_in_flush;
+	qp_info->rq_in_flush = resp.rq_in_flush;
+	qp_info->sq_flushed_pi = resp.sq_flushed_pi;
+	qp_info->rq_flushed_pi = resp.rq_flushed_pi;
+	qp_info->sqbuf_addr = resp.sqbuf_addr;
+	qp_info->rqbuf_addr = resp.rqbuf_addr;
+	qp_info->sdbrec_addr = resp.sdbrec_addr;
+	qp_info->rdbrec_addr = resp.rdbrec_addr;
+	qp_info->ip_src = resp.ip_src;
+	qp_info->ip_dst = resp.ip_dst;
+	qp_info->srcport = resp.srcport;
+	qp_info->dstport = resp.dstport;
+	qp_info->sdbrec_val = resp.sdbrec_cur;
+	qp_info->rdbrec_val = resp.rdbrec_cur;
+
+	if (qpn != 0 && resp.scqn != qp_info->assoc_scqn)
+		ibdev_info(&dev->ibdev, "hw scqn(%u) != drv scqn(%u)\n",
+			   resp.scqn, qp_info->assoc_scqn);
+
+	if (qpn != 0 && resp.rcqn != qp_info->assoc_rcqn)
+		ibdev_info(&dev->ibdev, "hw rcqn(%u) != drv rcqn(%u)\n",
+			   resp.rcqn, qp_info->assoc_rcqn);
+
+	return 0;
+}
+
+static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
+				struct erdma_ioctl_msg *msg)
+{
+	struct erdma_qp_info *qp_info;
+	int ret = 0, count = 0, i;
 #ifdef HAVE_XARRAY
+	struct erdma_qp *qp;
+	struct erdma_cq *cq;
 	unsigned long index;
 #else
 	void *entry;
@@ -145,83 +434,14 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 
 	switch (msg->in.opcode) {
 	case ERDMA_INFO_TYPE_QP:
-		qp = find_qp_by_qpn(edev, msg->in.info_req.qn);
-		if (!qp)
-			return -EINVAL;
-		erdma_qp_get(qp);
-
 		qp_info = &msg->out.qp_info;
-
-		qp_info->qpn = qp->ibqp.qp_num;
-		qp_info->qp_state = qp->attrs.state;
-		qp_info->ref_cnt = kref_read(&qp->ref);
-		qp_info->qtype = qp->attrs.qp_type;
-		qp_info->sq_depth = qp->attrs.sq_size;
-		qp_info->rq_depth = qp->attrs.rq_size;
-		qp_info->cookie = qp->attrs.remote_cookie;
-		qp_info->cc = qp->attrs.cc;
-		qp_info->assoc_scqn = qp->scq->cqn;
-		qp_info->assoc_rcqn = qp->rcq->cqn;
-
-		if (qp->cep && qp->cep->cm_id) {
-			struct erdma_cep *cep = qp->cep;
-			struct iw_cm_id *id = cep->cm_id;
-			struct sockaddr_storage	remote_addr;
-			struct sockaddr_storage	local_addr;
-
-			qp_info->sip = ntohl(to_sockaddr_in(id->local_addr).sin_addr.s_addr);
-			qp_info->dip = ntohl(to_sockaddr_in(id->remote_addr).sin_addr.s_addr);
-			qp_info->sport = ntohs(to_sockaddr_in(id->local_addr).sin_port);
-			qp_info->dport = ntohs(to_sockaddr_in(id->remote_addr).sin_port);
-
-			if (cep->sock) {
-				getname_local(cep->sock, &local_addr);
-				getname_peer(cep->sock, &remote_addr);
-				qp_info->origin_sport = ntohs(to_sockaddr_in(local_addr).sin_port);
-				qp_info->sip = ntohl(to_sockaddr_in(local_addr).sin_addr.s_addr);
-			}
-		}
-
-#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
-		res = &qp->ibqp.res;
-		qp_info->is_user = !rdma_is_kernel_res(res);
-		if (qp_info->is_user) {
-			qp_info->pid = res->task->pid;
-			get_task_comm(qp_info->buf, res->task);
-#else
-		if (qp->user) {
-#endif
-			mtt = &qp->user_qp.sq_mtt;
-			qp_info->sq_mtt_type = mtt->mtt_type;
-			qp_info->sq_mtt.page_size = mtt->page_size;
-			qp_info->sq_mtt.page_offset = mtt->page_offset;
-			qp_info->sq_mtt.page_cnt = mtt->page_cnt;
-			qp_info->sq_mtt.mtt_nents = mtt->mtt_nents;
-			qp_info->sq_mtt.va = mtt->va;
-			qp_info->sq_mtt.len = mtt->len;
-			for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
-				qp_info->sq_mtt.mtt_entry[i] =
-					mtt->mtt_entry[i];
-
-			mtt = &qp->user_qp.rq_mtt;
-			qp_info->rq_mtt_type = mtt->mtt_type;
-			qp_info->rq_mtt.page_size = mtt->page_size;
-			qp_info->rq_mtt.page_offset = mtt->page_offset;
-			qp_info->rq_mtt.page_cnt = mtt->page_cnt;
-			qp_info->rq_mtt.mtt_nents = mtt->mtt_nents;
-			qp_info->rq_mtt.va = mtt->va;
-			qp_info->rq_mtt.len = mtt->len;
-			for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
-				qp_info->rq_mtt.mtt_entry[i] =
-					mtt->mtt_entry[i];
-		}
-
-		erdma_qp_put(qp);
+		ret = erdma_fill_qp_info(edev, msg->in.info_req.qn, qp_info);
 
 		break;
 	case ERDMA_INFO_TYPE_ALLOCED_QP:
 #ifdef HAVE_XARRAY
-		xa_for_each_start(&edev->qp_xa, index, qp, msg->in.info_req.qn) {
+		xa_for_each_start(&edev->qp_xa, index, qp,
+				   msg->in.info_req.qn) {
 #else
 		idr_for_each_entry(&edev->qp_idr, entry, index) {
 			if (index < msg->in.info_req.qn)
@@ -233,19 +453,35 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 		}
 		msg->out.length = count * 4;
 		break;
+	case ERDMA_INFO_TYPE_ALLOCED_CQ:
+#ifdef HAVE_XARRAY
+		xa_for_each_start(&edev->cq_xa, index, cq,
+				   msg->in.info_req.qn) {
+#else
+		idr_for_each_entry(&edev->cq_idr, entry, index) {
+			if (index < msg->in.info_req.qn)
+				continue;
+#endif
+			msg->out.allocted_cqn[count++] = index;
+			if (count == msg->in.info_req.max_result_cnt)
+				break;
+		}
+		msg->out.length = count * 4;
+
+		break;
 	case ERDMA_INFO_TYPE_EQ:
 		msg->out.eq_info[0].ready = 1;
 		msg->out.eq_info[0].eqn = 0;
-		fill_eq_info(&msg->out.eq_info[0], &edev->aeq);
+		fill_eq_info(edev, &msg->out.eq_info[0], &edev->aeq);
 
 		msg->out.eq_info[1].ready = 1;
 		msg->out.eq_info[1].eqn = 1;
-		fill_eq_info(&msg->out.eq_info[1], &edev->cmdq.eq);
+		fill_eq_info(edev, &msg->out.eq_info[1], &edev->cmdq.eq);
 
 		for (i = 0; i < 31; i++) {
 			msg->out.eq_info[i + 2].ready = edev->ceqs[i].ready;
 			msg->out.eq_info[i + 2].eqn = i + 2;
-			fill_eq_info(&msg->out.eq_info[i + 2],
+			fill_eq_info(edev, &msg->out.eq_info[i + 2],
 				     &edev->ceqs[i].eq);
 		}
 		break;
@@ -253,7 +489,7 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 		show_cep_info(edev);
 		break;
 	case ERDMA_INFO_TYPE_CQ:
-		ret = show_cq_info(edev, msg->in.info_req.qn, msg);
+		ret = fill_cq_info(edev, msg->in.info_req.qn, msg);
 		break;
 	default:
 		pr_info("unknown opcode:%u\n", msg->in.opcode);
@@ -265,39 +501,24 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 
 int erdma_ioctl_stat_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 {
-	__u64 *stats_data;
+	int ret;
 
 	switch (msg->in.opcode) {
 	case ERDMA_STAT_TYPE_QP:
 	case ERDMA_STAT_TYPE_CQ:
 		break;
 	case ERDMA_STAT_TYPE_DEV:
-		stats_data = (__u64 *)msg->out.data;
-		stats_data[0] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_TSO_IN_PKTS_REG);
-		stats_data[1] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_TSO_OUT_PKTS_REG);
-		stats_data[2] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_TSO_OUT_BYTES_REG);
-		stats_data[3] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_TX_DROP_PKTS_REG);
-		stats_data[4] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_TX_BPS_METER_DROP_PKTS_REG);
-		stats_data[5] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_TX_PPS_METER_DROP_PKTS_REG);
+		ret = erdma_query_hw_stats(edev);
+		if (ret)
+			return ret;
 
-		stats_data[6] =
-			erdma_reg_read64(edev, ERDMA_REGS_STATS_RX_PKTS_REG);
-		stats_data[7] =
-			erdma_reg_read64(edev, ERDMA_REGS_STATS_RX_BYTES_REG);
-		stats_data[8] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_RX_DROP_PKTS_REG);
-		stats_data[9] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_RX_BPS_METER_DROP_PKTS_REG);
-		stats_data[10] = erdma_reg_read64(
-			edev, ERDMA_REGS_STATS_RX_PPS_METER_DROP_PKTS_REG);
+		/* Make sure that no overflow happens. */
+		BUILD_BUG_ON(ERDMA_STATS_MAX > 512);
 
-		msg->out.length = 256;
+		memcpy(msg->out.stats, &edev->stats,
+		       sizeof(__u64) * ERDMA_STATS_MAX);
+
+		msg->out.length = ERDMA_STATS_MAX * sizeof(__u64);
 		break;
 	default:
 		pr_err("unknown stat opcode %d.\n", msg->in.opcode);
@@ -315,7 +536,9 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 	struct erdma_cq *cq;
 	struct erdma_eq *eq;
 	int ret = 0;
+#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
 	u64 address;
+#endif
 	u32 wqe_idx;
 
 	switch (msg->in.opcode) {
@@ -347,6 +570,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 					erdma_qp_put(qp);
 					return -EIO;
 				}
+				ret = 0;
 			} else {
 				wqe_idx = qe_idx & (qp->attrs.sq_size - 1);
 				memcpy(msg->out.data,
@@ -381,6 +605,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 				erdma_qp_put(qp);
 				return -EIO;
 			}
+			ret = 0;
 		} else {
 			wqe_idx = qe_idx & (qp->attrs.rq_size - 1);
 			memcpy(msg->out.data,
@@ -418,6 +643,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 						ret);
 					return -EIO;
 				}
+				ret = 0;
 			} else {
 				wqe_idx = qe_idx & (cq->depth - 1);
 				memcpy(msg->out.data,
@@ -450,6 +676,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 		memcpy(msg->out.data, eq->qbuf + (wqe_idx << EQE_SHIFT),
 		       EQE_SIZE);
 		msg->out.length = EQE_SIZE;
+		break;
 	default:
 		break;
 	}
@@ -555,6 +782,7 @@ static int chardev_close(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+/* clang-format off */
 static const struct file_operations chardev_fops = {
 	.owner = THIS_MODULE,
 	.open = chardev_open,
@@ -562,6 +790,7 @@ static const struct file_operations chardev_fops = {
 	.read = chardev_read,
 	.unlocked_ioctl = chardev_ioctl
 };
+/* clang-format on */
 
 void erdma_chrdev_destroy(void)
 {
