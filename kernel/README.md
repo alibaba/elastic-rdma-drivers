@@ -3,7 +3,7 @@ Linux kernel driver for Elastic Rdma Adapter (ERDMA)
 
 Overview
 ========
-Elastic RDMA Adapter (ERDMA) enables large-scale RDMA acceleration capability in Alibaba ECS environment, initially offered in g7re instance.
+Elastic RDMA Adapter (ERDMA) enables large-scale RDMA acceleration capability in Alibaba ECS environment, offered in all generation 8 instances.
 
 It can improve the efficiency of large-scale distributed computing and communication significantly and expand dynamically with the cluster scale of Alibaba Cloud.
 
@@ -41,14 +41,6 @@ For compilation, run these commands:
    make
 ```
 erdma.ko is created inside the src/ folder.
-
-Peer-to-peer memory support provides GDR support and can be enabled by running cmake with the following parameter:
-```shell
-cmake -DENABLE_P2P=1 ..
-```
-
-For more information regarding GPUDirect RDMA, visit:
-https://docs.nvidia.com/cuda/gpudirect-rdma/index.html
 
 Package Build
 -------------
