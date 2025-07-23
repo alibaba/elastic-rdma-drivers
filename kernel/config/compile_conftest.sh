@@ -4,10 +4,18 @@
 
 tmpdir=$1
 kerneldir=$2
-success=$3
-fail=$4
 
-make -C $tmpdir KERNEL_DIR=$kerneldir >/dev/null 2>$tmpdir/output.log
+if [ $# -eq 4 ]; then
+	success=$3
+	fail=$4
+	make -C $tmpdir KERNEL_DIR=$kerneldir >/dev/null 2>$tmpdir/output.log
+else
+	success=$4
+	fail=$5
+
+	make -C $tmpdir KERNEL_DIR=$kerneldir OFA_DIR=$3 >/dev/null 2>$tmpdir/output.log
+fi
+
 err=$?
 
 if [[ "$err" -eq 0 ]] && [[ -n "$success" ]]; then

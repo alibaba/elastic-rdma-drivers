@@ -1,7 +1,7 @@
 Source: erdma
 Maintainer:  alibaba-erdma-group <erdma-group@alibaba.com>
 Build-Depends: debhelper
-Standards-Version: 1.0.0
+Standards-Version: 4.6.1
 
 Package: erdma
 Architecture: any

@@ -5,6 +5,7 @@
 /* Copyright (c) 2020-2022, Alibaba Group. */
 
 #include "erdma.h"
+#include "erdma_verbs.h"
 
 #if defined(HAVE_SINGLE_HW_STATS) || defined(HAVE_SPLIT_STATS_ALLOC)
 
@@ -169,6 +170,11 @@ int erdma_get_hw_stats(struct ib_device *ibdev, struct rdma_hw_stats *stats,
 		       port_t port_num, int index)
 {
 	struct erdma_dev *dev = to_edev(ibdev);
+	int ret;
+
+	ret = erdma_query_hw_stats(dev);
+	if (ret)
+		return ret;
 
 	atomic64_set(&dev->stats.value[ERDMA_STATS_CMDQ_SUBMITTED],
 		     dev->cmdq.sq.total_cmds);

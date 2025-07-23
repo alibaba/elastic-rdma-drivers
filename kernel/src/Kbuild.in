@@ -1,13 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
+# Copyright 2023 Alibaba.com, Inc. All rights reserved
+
+KERNEL_DIR ?= /lib/modules/$(shell uname -r)/build
+
+ifeq ($(src),)
+	src=.
+endif
+include $(src)/ofa.mk
+
 ifneq (${LINUXINCLUDE},)
 LINUXINCLUDE := \
-	-I/usr/src/ofa_kernel/default/include \
-	-I/usr/src/ofa_kernel/default/include/uapi/ \
+	${OFAINCLUDE} \
 	${LINUXINCLUDE}
 endif
 
-ifneq ($(wildcard /usr/src/ofa_kernel/default/Module.symvers),)
-	KBUILD_EXTRA_SYMBOLS=/usr/src/ofa_kernel/default/Module.symvers
-endif
+KBUILD_CFLAGS += -Werror
 
 obj-m := erdma.o
 erdma-y := $(patsubst %.c,%.o, $(filter %.c, @erdma_sources_string@))

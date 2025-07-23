@@ -3,7 +3,7 @@
 set -e
 
 NAME=erdma
-DRIVER_VERSION=1.0.0
+DRIVER_VERSION=1.0.2
 
 dkms remove -m ${NAME} -v ${DRIVER_VERSION} --all
 

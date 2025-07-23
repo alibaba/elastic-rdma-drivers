@@ -12,11 +12,12 @@ function(set_conf_tmp_dir prologue body)
   set(tmp_dir ${tmp_dir} PARENT_SCOPE)
   configure_file(${CMAKE_SOURCE_DIR}/config/main.c.in ${tmp_dir}/main.c @ONLY)
   configure_file(${CMAKE_SOURCE_DIR}/config/Makefile ${tmp_dir} COPYONLY)
+  configure_file(${CMAKE_SOURCE_DIR}/src/ofa.mk ${tmp_dir} COPYONLY)
 endfunction()
 
 function(try_compile_prog_test)
   set_conf_tmp_dir("" "")
-  execute_process(COMMAND make -C ${tmp_dir} KERNEL_DIR=${KERNEL_DIR}
+  execute_process(COMMAND make -C ${tmp_dir} KERNEL_DIR=${KERNEL_DIR} OFA_DIR=${OFA_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     OUTPUT_QUIET ERROR_QUIET
     RESULT_VARIABLE res)
@@ -57,7 +58,7 @@ function(try_compile prologue body success_def fail_def)
   # Rate limit processes
   process_rl()
   set_conf_tmp_dir("${prologue}" "${body}")
-  execute_process(COMMAND ${CMAKE_SOURCE_DIR}/config/runbg.sh ${CMAKE_SOURCE_DIR}/config/compile_conftest.sh ${CMAKE_CURRENT_BINARY_DIR}/${tmp_dir} ${KERNEL_DIR} "${success_def}" "${fail_def}"
+  execute_process(COMMAND ${CMAKE_SOURCE_DIR}/config/runbg.sh ${CMAKE_SOURCE_DIR}/config/compile_conftest.sh ${CMAKE_CURRENT_BINARY_DIR}/${tmp_dir} ${KERNEL_DIR} ${OFA_DIR} "${success_def}" "${fail_def}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     OUTPUT_STRIP_TRAILING_WHITESPACE
     OUTPUT_VARIABLE pid)
@@ -156,7 +157,15 @@ try_compile("" "struct ib_device_ops ops;" HAVE_IB_DEV_OPS "")
 
 try_compile_dev_or_ops(create_ah erdma_kzalloc_ah
   "struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct rdma_ah_attr *ah_attr, u32 flags, struct ib_udata *udata) { return NULL; }"
-  HAVE_CREATE_DESTROY_AH_FLAGS "")
+  HAVE_CREATE_AH_FLAGS "")
+
+try_compile_dev_or_ops(destroy_ah erdma_destroy_ah
+  "void erdma_destroy_ah(struct ib_ah *ibah, u32 flags) {}"
+  HAVE_DESTROY_AH_VOID "")
+
+try_compile_dev_or_ops(destroy_ah erdma_destroy_ah
+  "int erdma_destroy_ah(struct ib_ah *ibah, u32 flags) { return 0; }"
+  HAVE_DESTROY_AH_FLAGS "")
 
 try_compile(
   "
@@ -268,6 +277,10 @@ try_compile_dev_or_ops(destroy_cq erdma_destroy_cq
 try_compile_dev_or_ops(destroy_qp erdma_destroy_qp
   "int erdma_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata) { return 0; }"
   HAVE_DESTROY_QP_UDATA "")
+
+try_compile_dev_or_ops(create_ah erdma_create_ah
+  "int erdma_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr, struct ib_udata *udata) { return 0; }"
+  HAVE_CREATE_AH_RDMA_INIT_ATTR "")
 
 try_compile("#include <rdma/ib_umem.h>" "ib_umem_find_best_pgsz(NULL, 0, 0);"
   HAVE_IB_UMEM_FIND_SINGLE_PG_SIZE "")
@@ -419,13 +432,17 @@ try_compile_dev_or_ops(alloc_hw_stats erdma_alloc_hw_stats
   "struct rdma_hw_stats *erdma_alloc_hw_stats(struct ib_device *ibdev, u32 port_num ) { return NULL; }"
   HAVE_SINGLE_HW_STATS "")
 
+try_compile_dev_or_ops(get_vector_affinity erdma_get_vector_affinity
+  "const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev, int comp_vector) { return NULL; }"
+  HAVE_GET_VECTOR_AFFINITY "")
+
 try_compile("#include <linux/sysfs.h>"
   "
 sysfs_emit(NULL, \"Test\");
   "
   HAVE_SYSFS_EMIT "")
 
-try_compile("#include <linux/xarray.h>" "xa_load(NULL, 0);" HAVE_XARRAY "")
+try_compile("#include <linux/xarray.h>" "xa_load(NULL, 0);" HAVE_XARRAY_API "")
 
 try_compile(""
   "
@@ -471,7 +488,7 @@ try_compile("#include <net/sock.h>"
   "
 sock_set_reuseaddr(NULL);
   "
-  HAVE_SOCK_SET_REUSEADDR "")
+  HAVE_SK_SET_REUSEADDR "")
 
 try_compile("#include <rdma/ib_umem.h>"
   "
@@ -607,9 +624,57 @@ try_compile("#include <rdma/ib_verbs.h>"
 
 try_compile("#include <rdma/ib_umem.h>"
   "
-  ib_umem_get_peer(NULL, 0, 0, 0 ,0);
+  struct ib_device *ibdev;
+  ib_umem_get_peer(ibdev, 0, 0, 0 ,0);
   "
-  HAVE_IB_UMEM_GET_PEER ""
+  HAVE_IB_UMEM_GET_PEER_DEVICE ""
+)
+
+try_compile("#include <rdma/ib_umem.h>"
+  "
+  struct ib_udata *udata;
+  ib_umem_get_peer(udata, 0, 0, 0 ,0);
+  "
+  HAVE_IB_UMEM_GET_PEER_UDATA ""
+)
+
+try_compile("#include <linux/netdevice.h>"
+  "
+struct net_device netdev = {
+  .lower_level = 0,
+};
+  "
+  HAVE_LOWER_LEVEL_IN_NET_DEVICE ""
+)
+
+try_compile("#include <rdma/ib_verbs.h>" "ib_device_get_by_netdev(NULL, 0);"
+  HAVE_IB_DEVICE_GET_BY_NETDEV "")
+
+try_compile("#include <net/ip.h>" "ip_local_out(NULL, NULL, NULL);"
+  HAVE_IP_LOCAL_OUT_NET_SOCK "")
+
+try_compile("#include <net/ip.h>" "ip_local_out(NULL);"
+  HAVE_IP_LOCAL_OUT_SKB "")
+
+try_compile("#include <linux/net.h>"
+  "sock_create_kern(AF_INET, SOCK_DGRAM, 0, NULL);"
+  HAVE_SOCK_NO_NET_PARAM "")
+
+try_compile("#include <rdma/ib_cache.h>" "rdma_read_gid_attr_ndev_rcu(NULL);"
+  HAVE_RDMA_READ_GID_ATTR_NDEV_RCU "")
+
+try_compile("#include <rdma/ib_cache.h>"
+  "
+  rdma_get_gid_attr(NULL, 0, 0);
+  "
+  HAVE_RDMA_GID_API ""
+)
+
+try_compile("#include <rdma/ib_cache.h>"
+  "
+  rdma_find_gid_by_port(NULL, NULL, 0, 0, NULL);
+  "
+  HAVE_RDMA_FIND_GID_BY_PORT ""
 )
 
 try_compile("#include <rdma/ib_verbs.h>"
@@ -617,6 +682,29 @@ try_compile("#include <rdma/ib_verbs.h>"
   int flags = IB_QP_CREATE_IWARP_WITHOUT_CM;
   "
   HAVE_IB_QP_CREATE_IWARP_WITHOUT_CM ""
+)
+
+try_compile("#include <linux/bitfield.h>"
+  "
+  be32_to_cpu_array(NULL, NULL, 1);
+  "
+  HAVE_BYTEORDER_ARRAY_API ""
+)
+
+try_compile("#include <linux/netdevice.h>"
+  "
+struct net_device netdev = {
+  .lower_level = 0,
+};
+  "
+  HAVE_LOWER_LEVEL_IN_NET_DEVICE ""
+)
+
+try_compile("#include <linux/rtnetlink.h>"
+  "
+down_read(&net_rwsem);
+  "
+  HAVE_NET_RWSEM ""
 )
 
 wait_for_pids()

@@ -55,13 +55,16 @@ enum erdma_info_type {
 	ERDMA_INFO_TYPE_CQ,
 	ERDMA_INFO_TYPE_EQ,
 	ERDMA_INFO_TYPE_CEP,
+	ERDMA_INFO_TYPE_EXT_ATTR,
 	ERDMA_INFO_TYPE_MAX,
 };
 
 enum erdma_config_type {
 	ERDMA_CONFIG_TYPE_CC = 0,
-	ERDMA_CONFIG_TYPE_LOGLEVEL,
+	ERDMA_CONFIG_TYPE_DISCARD0,
 	ERDMA_CONFIG_TYPE_RETRANS_NUM,
+	ERDMA_CONFIG_TYPE_DACK_COUNT,
+	ERDMA_CONFIG_TYPE_LEGACY_MODE,
 	ERDMA_CONFIG_MAX
 };
 
@@ -240,6 +243,14 @@ struct erdma_eq_info {
 
 };
 
+struct erdma_ext_attr_info {
+	__u8 cap;
+	__u8 rsvd[3];
+	__u32 ext_cap;
+	__u32 attr_mask;
+	__u8 dack_count;
+};
+
 struct erdma_ioctl_inbuf {
 	__u32 opcode;
 	char ibdev_name[ERDMA_DEVICE_NAME_MAX_LEN + 1];
@@ -279,6 +290,7 @@ struct erdma_ioctl_outbuf {
 		/* 0: AEQ, 1: Cmd-EQ, 2-32: Completion-EQ */
 		struct erdma_eq_info eq_info[33];
 		struct erdma_cq_info cq_info;
+		struct erdma_ext_attr_info ext_attr_info;
 
 		__u32 version;
 		__u64 stats[512];

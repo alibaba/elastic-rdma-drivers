@@ -1,0 +1,934 @@
+// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+/*
+ * Copyright (c) 2016 Mellanox Technologies Ltd. All rights reserved.
+ * Copyright (c) 2015 System Fabric Works, Inc. All rights reserved.
+ */
+
+#include <rdma/ib_pack.h>
+#include "sw_opcode.h"
+#include "sw_hdr.h"
+
+/* useful information about work request opcodes and pkt opcodes in
+ * table form
+ */
+struct sw_wr_opcode_info sw_wr_opcode_info[] = {
+	[IB_WR_RDMA_WRITE]				= {
+		.name	= "IB_WR_RDMA_WRITE",
+		.mask	= {
+			[IB_QPT_RC]	= WR_INLINE_MASK | WR_WRITE_MASK,
+			[IB_QPT_UC]	= WR_INLINE_MASK | WR_WRITE_MASK,
+		},
+	},
+	[IB_WR_RDMA_WRITE_WITH_IMM]			= {
+		.name	= "IB_WR_RDMA_WRITE_WITH_IMM",
+		.mask	= {
+			[IB_QPT_RC]	= WR_INLINE_MASK | WR_WRITE_MASK,
+			[IB_QPT_UC]	= WR_INLINE_MASK | WR_WRITE_MASK,
+		},
+	},
+	[IB_WR_SEND]					= {
+		.name	= "IB_WR_SEND",
+		.mask	= {
+			[IB_QPT_SMI]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_GSI]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_RC]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_UC]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_UD]	= WR_INLINE_MASK | WR_SEND_MASK,
+		},
+	},
+	[IB_WR_SEND_WITH_IMM]				= {
+		.name	= "IB_WR_SEND_WITH_IMM",
+		.mask	= {
+			[IB_QPT_SMI]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_GSI]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_RC]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_UC]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_UD]	= WR_INLINE_MASK | WR_SEND_MASK,
+		},
+	},
+	[IB_WR_RDMA_READ]				= {
+		.name	= "IB_WR_RDMA_READ",
+		.mask	= {
+			[IB_QPT_RC]	= WR_READ_MASK,
+		},
+	},
+	[IB_WR_ATOMIC_CMP_AND_SWP]			= {
+		.name	= "IB_WR_ATOMIC_CMP_AND_SWP",
+		.mask	= {
+			[IB_QPT_RC]	= WR_ATOMIC_MASK,
+		},
+	},
+	[IB_WR_ATOMIC_FETCH_AND_ADD]			= {
+		.name	= "IB_WR_ATOMIC_FETCH_AND_ADD",
+		.mask	= {
+			[IB_QPT_RC]	= WR_ATOMIC_MASK,
+		},
+	},
+	[IB_WR_LSO]					= {
+		.name	= "IB_WR_LSO",
+		.mask	= {
+			/* not supported */
+		},
+	},
+	[IB_WR_SEND_WITH_INV]				= {
+		.name	= "IB_WR_SEND_WITH_INV",
+		.mask	= {
+			[IB_QPT_RC]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_UC]	= WR_INLINE_MASK | WR_SEND_MASK,
+			[IB_QPT_UD]	= WR_INLINE_MASK | WR_SEND_MASK,
+		},
+	},
+	[IB_WR_RDMA_READ_WITH_INV]			= {
+		.name	= "IB_WR_RDMA_READ_WITH_INV",
+		.mask	= {
+			[IB_QPT_RC]	= WR_READ_MASK,
+		},
+	},
+	[IB_WR_LOCAL_INV]				= {
+		.name	= "IB_WR_LOCAL_INV",
+		.mask	= {
+			[IB_QPT_RC]	= WR_REG_MASK,
+		},
+	},
+	[IB_WR_REG_MR]					= {
+		.name	= "IB_WR_REG_MR",
+		.mask	= {
+			[IB_QPT_RC]	= WR_REG_MASK,
+		},
+	},
+};
+
+struct sw_opcode_info sw_opcode[SW_NUM_OPCODE] = {
+	[IB_OPCODE_RC_SEND_FIRST]			= {
+		.name	= "IB_OPCODE_RC_SEND_FIRST",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_RWR_MASK
+				| SW_SEND_MASK | SW_START_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_MIDDLE]		= {
+		.name	= "IB_OPCODE_RC_SEND_MIDDLE]",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_SEND_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_LAST]			= {
+		.name	= "IB_OPCODE_RC_SEND_LAST",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_COMP_MASK
+				| SW_SEND_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE",
+		.mask	= SW_IMMDT_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_SEND_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IMMDT]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_ONLY]			= {
+		.name	= "IB_OPCODE_RC_SEND_ONLY",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_COMP_MASK
+				| SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_IMMDT_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IMMDT]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_WRITE_FIRST]		= {
+		.name	= "IB_OPCODE_RC_RDMA_WRITE_FIRST",
+		.mask	= SW_RETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_WRITE_MIDDLE]		= {
+		.name	= "IB_OPCODE_RC_RDMA_WRITE_MIDDLE",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_WRITE_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_WRITE_LAST]			= {
+		.name	= "IB_OPCODE_RC_RDMA_WRITE_LAST",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_WRITE_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE",
+		.mask	= SW_IMMDT_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_COMP_MASK | SW_RWR_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IMMDT]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_WRITE_ONLY]			= {
+		.name	= "IB_OPCODE_RC_RDMA_WRITE_ONLY",
+		.mask	= SW_RETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_START_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_RETH_MASK | SW_IMMDT_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_WRITE_MASK
+				| SW_COMP_MASK | SW_RWR_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_READ_REQUEST]			= {
+		.name	= "IB_OPCODE_RC_RDMA_READ_REQUEST",
+		.mask	= SW_RETH_MASK | SW_REQ_MASK | SW_READ_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST]		= {
+		.name	= "IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST",
+		.mask	= SW_AETH_MASK | SW_PAYLOAD_MASK | SW_ACK_MASK
+				| SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_AETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE]		= {
+		.name	= "IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE",
+		.mask	= SW_PAYLOAD_MASK | SW_ACK_MASK | SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_READ_RESPONSE_LAST]		= {
+		.name	= "IB_OPCODE_RC_RDMA_READ_RESPONSE_LAST",
+		.mask	= SW_AETH_MASK | SW_PAYLOAD_MASK | SW_ACK_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_AETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_RDMA_READ_RESPONSE_ONLY]		= {
+		.name	= "IB_OPCODE_RC_RDMA_READ_RESPONSE_ONLY",
+		.mask	= SW_AETH_MASK | SW_PAYLOAD_MASK | SW_ACK_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_AETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_ACKNOWLEDGE]			= {
+		.name	= "IB_OPCODE_RC_ACKNOWLEDGE",
+		.mask	= SW_AETH_MASK | SW_ACK_MASK | SW_START_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_AETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE]			= {
+		.name	= "IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE",
+		.mask	= SW_AETH_MASK | SW_ATMACK_MASK | SW_ACK_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_ATMACK_BYTES + SW_AETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_AETH]	= SW_BTH_BYTES,
+			[SW_ATMACK]	= SW_BTH_BYTES
+						+ SW_AETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+					+ SW_ATMACK_BYTES + SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_COMPARE_SWAP]			= {
+		.name	= "IB_OPCODE_RC_COMPARE_SWAP",
+		.mask	= SW_ATMETH_MASK | SW_REQ_MASK | SW_ATOMIC_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_ATMETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_ATMETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_ATMETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_FETCH_ADD]			= {
+		.name	= "IB_OPCODE_RC_FETCH_ADD",
+		.mask	= SW_ATMETH_MASK | SW_REQ_MASK | SW_ATOMIC_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_ATMETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_ATMETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_ATMETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE]		= {
+		.name	= "IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE",
+		.mask	= SW_IETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_SEND_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RC_SEND_ONLY_WITH_INVALIDATE]		= {
+		.name	= "IB_OPCODE_RC_SEND_ONLY_INV",
+		.mask	= SW_IETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_RWR_MASK | SW_SEND_MASK
+				| SW_END_MASK  | SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_IETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IETH_BYTES,
+		}
+	},
+
+	/* UC */
+	[IB_OPCODE_UC_SEND_FIRST]			= {
+		.name	= "IB_OPCODE_UC_SEND_FIRST",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_RWR_MASK
+				| SW_SEND_MASK | SW_START_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_SEND_MIDDLE]		= {
+		.name	= "IB_OPCODE_UC_SEND_MIDDLE",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_SEND_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_SEND_LAST]			= {
+		.name	= "IB_OPCODE_UC_SEND_LAST",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_COMP_MASK
+				| SW_SEND_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_SEND_LAST_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_UC_SEND_LAST_WITH_IMMEDIATE",
+		.mask	= SW_IMMDT_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_SEND_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IMMDT]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_SEND_ONLY]			= {
+		.name	= "IB_OPCODE_UC_SEND_ONLY",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_COMP_MASK
+				| SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_SEND_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_UC_SEND_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_IMMDT_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IMMDT]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_RDMA_WRITE_FIRST]		= {
+		.name	= "IB_OPCODE_UC_RDMA_WRITE_FIRST",
+		.mask	= SW_RETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_RDMA_WRITE_MIDDLE]		= {
+		.name	= "IB_OPCODE_UC_RDMA_WRITE_MIDDLE",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_WRITE_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_RDMA_WRITE_LAST]			= {
+		.name	= "IB_OPCODE_UC_RDMA_WRITE_LAST",
+		.mask	= SW_PAYLOAD_MASK | SW_REQ_MASK | SW_WRITE_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_PAYLOAD]	= SW_BTH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_RDMA_WRITE_LAST_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_UC_RDMA_WRITE_LAST_WITH_IMMEDIATE",
+		.mask	= SW_IMMDT_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_COMP_MASK | SW_RWR_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_IMMDT]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_RDMA_WRITE_ONLY]			= {
+		.name	= "IB_OPCODE_UC_RDMA_WRITE_ONLY",
+		.mask	= SW_RETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_START_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_UC_RDMA_WRITE_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_UC_RDMA_WRITE_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_RETH_MASK | SW_IMMDT_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_WRITE_MASK
+				| SW_COMP_MASK | SW_RWR_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_RETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RETH]	= SW_BTH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+
+	/* RD */
+	[IB_OPCODE_RD_SEND_FIRST]			= {
+		.name	= "IB_OPCODE_RD_SEND_FIRST",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_SEND_MIDDLE]		= {
+		.name	= "IB_OPCODE_RD_SEND_MIDDLE",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_SEND_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_SEND_LAST]			= {
+		.name	= "IB_OPCODE_RD_SEND_LAST",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_COMP_MASK | SW_SEND_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_SEND_LAST_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RD_SEND_LAST_WITH_IMMEDIATE",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_IMMDT_MASK
+				| SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_SEND_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_SEND_ONLY]			= {
+		.name	= "IB_OPCODE_RD_SEND_ONLY",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_COMP_MASK | SW_RWR_MASK
+				| SW_SEND_MASK | SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_SEND_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RD_SEND_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_IMMDT_MASK
+				| SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_WRITE_FIRST]		= {
+		.name	= "IB_OPCODE_RD_RDMA_WRITE_FIRST",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_RETH_MASK
+				| SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_RETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_WRITE_MIDDLE]		= {
+		.name	= "IB_OPCODE_RD_RDMA_WRITE_MIDDLE",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_WRITE_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_WRITE_LAST]			= {
+		.name	= "IB_OPCODE_RD_RDMA_WRITE_LAST",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_WRITE_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_WRITE_LAST_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RD_RDMA_WRITE_LAST_WITH_IMMEDIATE",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_IMMDT_MASK
+				| SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_COMP_MASK | SW_RWR_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_WRITE_ONLY]			= {
+		.name	= "IB_OPCODE_RD_RDMA_WRITE_ONLY",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_RETH_MASK
+				| SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_WRITE_MASK | SW_START_MASK
+				| SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_RETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_RETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_WRITE_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_RD_RDMA_WRITE_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_RETH_MASK
+				| SW_IMMDT_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_WRITE_MASK
+				| SW_COMP_MASK | SW_RWR_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_RETH_BYTES
+				+ SW_DETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_RETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_RETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_RETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_READ_REQUEST]			= {
+		.name	= "IB_OPCODE_RD_RDMA_READ_REQUEST",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_RETH_MASK
+				| SW_REQ_MASK | SW_READ_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_RETH_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_RETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RETH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_RDETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_READ_RESPONSE_FIRST]		= {
+		.name	= "IB_OPCODE_RD_RDMA_READ_RESPONSE_FIRST",
+		.mask	= SW_RDETH_MASK | SW_AETH_MASK
+				| SW_PAYLOAD_MASK | SW_ACK_MASK
+				| SW_START_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_AETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_READ_RESPONSE_MIDDLE]		= {
+		.name	= "IB_OPCODE_RD_RDMA_READ_RESPONSE_MIDDLE",
+		.mask	= SW_RDETH_MASK | SW_PAYLOAD_MASK | SW_ACK_MASK
+				| SW_MIDDLE_MASK,
+		.length = SW_BTH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_READ_RESPONSE_LAST]		= {
+		.name	= "IB_OPCODE_RD_RDMA_READ_RESPONSE_LAST",
+		.mask	= SW_RDETH_MASK | SW_AETH_MASK | SW_PAYLOAD_MASK
+				| SW_ACK_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_AETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_RDMA_READ_RESPONSE_ONLY]		= {
+		.name	= "IB_OPCODE_RD_RDMA_READ_RESPONSE_ONLY",
+		.mask	= SW_RDETH_MASK | SW_AETH_MASK | SW_PAYLOAD_MASK
+				| SW_ACK_MASK | SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_AETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_ACKNOWLEDGE]			= {
+		.name	= "IB_OPCODE_RD_ACKNOWLEDGE",
+		.mask	= SW_RDETH_MASK | SW_AETH_MASK | SW_ACK_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_AETH_BYTES + SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_AETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_ATOMIC_ACKNOWLEDGE]			= {
+		.name	= "IB_OPCODE_RD_ATOMIC_ACKNOWLEDGE",
+		.mask	= SW_RDETH_MASK | SW_AETH_MASK | SW_ATMACK_MASK
+				| SW_ACK_MASK | SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_ATMACK_BYTES + SW_AETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_AETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_ATMACK]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_AETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_COMPARE_SWAP]			= {
+		.name	= "RD_COMPARE_SWAP",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_ATMETH_MASK
+				| SW_REQ_MASK | SW_ATOMIC_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_ATMETH_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_ATMETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES +
+						+ SW_ATMETH_BYTES
+						+ SW_DETH_BYTES +
+						+ SW_RDETH_BYTES,
+		}
+	},
+	[IB_OPCODE_RD_FETCH_ADD]			= {
+		.name	= "IB_OPCODE_RD_FETCH_ADD",
+		.mask	= SW_RDETH_MASK | SW_DETH_MASK | SW_ATMETH_MASK
+				| SW_REQ_MASK | SW_ATOMIC_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_ATMETH_BYTES + SW_DETH_BYTES
+				+ SW_RDETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_RDETH]	= SW_BTH_BYTES,
+			[SW_DETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES,
+			[SW_ATMETH]	= SW_BTH_BYTES
+						+ SW_RDETH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES +
+						+ SW_ATMETH_BYTES
+						+ SW_DETH_BYTES +
+						+ SW_RDETH_BYTES,
+		}
+	},
+
+	/* UD */
+	[IB_OPCODE_UD_SEND_ONLY]			= {
+		.name	= "IB_OPCODE_UD_SEND_ONLY",
+		.mask	= SW_DETH_MASK | SW_PAYLOAD_MASK | SW_REQ_MASK
+				| SW_COMP_MASK | SW_RWR_MASK | SW_SEND_MASK
+				| SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_DETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_DETH]	= SW_BTH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_DETH_BYTES,
+		}
+	},
+	[IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE]		= {
+		.name	= "IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE",
+		.mask	= SW_DETH_MASK | SW_IMMDT_MASK | SW_PAYLOAD_MASK
+				| SW_REQ_MASK | SW_COMP_MASK | SW_RWR_MASK
+				| SW_SEND_MASK | SW_START_MASK | SW_END_MASK,
+		.length = SW_BTH_BYTES + SW_IMMDT_BYTES + SW_DETH_BYTES,
+		.offset = {
+			[SW_BTH]	= 0,
+			[SW_DETH]	= SW_BTH_BYTES,
+			[SW_IMMDT]	= SW_BTH_BYTES
+						+ SW_DETH_BYTES,
+			[SW_PAYLOAD]	= SW_BTH_BYTES
+						+ SW_DETH_BYTES
+						+ SW_IMMDT_BYTES,
+		}
+	},
+
+};

@@ -1,0 +1,8 @@
+.vscode
+*.o
+.tmp_versions
+*.cmd
+src/.cache/
+src/compile_commands.json
+src/config.h
+build/

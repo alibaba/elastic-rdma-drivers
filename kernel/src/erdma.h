@@ -11,18 +11,24 @@
 #include <linux/bitfield.h>
 #include <linux/netdevice.h>
 #include <linux/pci.h>
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 #include <linux/xarray.h>
 #endif
 #include <rdma/ib_verbs.h>
 
-#include "erdma_debug.h"
 #include "erdma_hw.h"
 #include "erdma_ioctl.h"
 #include "erdma_stats.h"
 
+#ifdef HAVE_ERDMA_MAD
+#include "compat/sw_verbs.h"
+#endif
+
 #define DRV_MODULE_NAME "erdma"
 #define ERDMA_NODE_DESC "Elastic RDMA(iWARP) stack"
+
+extern bool legacy_mode;
+extern bool use_zeronet;
 
 struct erdma_stats {
 	atomic64_t value[ERDMA_STATS_MAX];
@@ -128,7 +134,7 @@ enum erdma_cc_alg {
 	ERDMA_CC_CUBIC,
 	ERDMA_CC_HPCC_RTT,
 	ERDMA_CC_HPCC_ECN,
-	ERDMA_CC_HPCC_INT,
+	ERDMA_CC_MPCC,
 	ERDMA_CC_METHODS_NUM
 };
 
@@ -136,11 +142,12 @@ struct erdma_devattr {
 	u32 fw_version;
 
 	unsigned char peer_addr[ETH_ALEN];
+	unsigned long cap_flags;
 
 	int numa_node;
 	enum erdma_cc_alg cc;
 	u8 retrans_num;
-	u8 flags;
+	u8 rsvd;
 	u32 grp_num;
 	u32 max_ceqs;
 	int irq_num;
@@ -199,11 +206,19 @@ enum {
 #define ERDMA_EXTRA_BUFFER_SIZE ERDMA_DB_SIZE
 #define WARPPED_BUFSIZE(size) ((size) + ERDMA_EXTRA_BUFFER_SIZE)
 
+enum {
+	ERDMA_STATE_AEQ_INIT_DONE = 0,
+};
+
 struct erdma_dev {
 	struct ib_device ibdev;
 	struct net_device *netdev;
+	rwlock_t netdev_lock;
 	struct pci_dev *pdev;
 	struct notifier_block netdev_nb;
+#ifdef HAVE_ERDMA_MAD
+	struct sw_dev sw_dev;
+#endif
 	struct workqueue_struct *reflush_wq;
 
 	resource_size_t func_bar_addr;
@@ -212,7 +227,8 @@ struct erdma_dev {
 
 	struct erdma_devattr attrs;
 	/* physical port state (only one port per device) */
-	enum ib_port_state state;
+	enum ib_port_state port_state;
+	unsigned long state;
 	u32 mtu;
 
 	/* cmdq and aeq use the same msix vector */
@@ -224,7 +240,7 @@ struct erdma_dev {
 	struct erdma_stats stats;
 	spinlock_t lock;
 	struct erdma_resource_cb res_cb[ERDMA_RES_CNT];
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 	struct xarray qp_xa;
 	struct xarray cq_xa;
 #else
@@ -248,12 +264,16 @@ struct erdma_dev {
 	atomic_t num_ctx;
 	atomic_t num_cep;
 	struct list_head cep_list;
-#ifndef HAVE_IB_DEVICE_GET_BY_NAME
+
+	/* Fields for compat */
 	struct list_head dev_list;
-#endif
+	refcount_t refcount;
+	struct completion unreg_completion;
 
 	struct dma_pool *db_pool;
 	struct dma_pool *resp_pool;
+
+	struct dentry *dbg_root;
 };
 
 static inline void *get_queue_entry(void *qbuf, u32 idx, u32 depth, u32 shift)
@@ -318,5 +338,19 @@ void erdma_ceq_completion_handler(struct erdma_eq_cb *ceq_cb);
 
 void erdma_chrdev_destroy(void);
 int erdma_chrdev_init(void);
+
+int erdma_query_resource(struct erdma_dev *dev, u32 mod, u32 op, u32 index,
+			 void *out, u32 len);
+int erdma_query_ext_attr(struct erdma_dev *dev, void *out);
+int erdma_set_ext_attr(struct erdma_dev *dev, struct erdma_ext_attr *attr);
+int erdma_set_dack_count(struct erdma_dev *dev, u32 value);
+int erdma_enable_legacy_mode(struct erdma_dev *dev, u32 value);
+
+void erdma_debugfs_register(void);
+void erdma_debugfs_unregister(void);
+
+int erdma_debugfs_files_create(struct erdma_dev *dev);
+void erdma_debugfs_files_destroy(struct erdma_dev *dev);
+extern struct dentry *erdma_debugfs_root;
 
 #endif

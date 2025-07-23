@@ -36,6 +36,9 @@ void erdma_aeq_event_handler(struct erdma_dev *dev)
 	struct ib_event event;
 	u32 poll_cnt = 0;
 
+	if (!test_bit(ERDMA_STATE_AEQ_INIT_DONE, &dev->state))
+		return;
+
 	memset(&event, 0, sizeof(event));
 
 	while (poll_cnt < MAX_POLL_CHUNK_SIZE) {
@@ -108,6 +111,9 @@ int erdma_aeq_init(struct erdma_dev *dev)
 	erdma_reg_write32(dev, ERDMA_REGS_AEQ_DEPTH_REG, eq->depth);
 	erdma_reg_write64(dev, ERDMA_AEQ_DB_HOST_ADDR_REG,
 			  eq->qbuf_dma_addr + buf_size);
+
+	/* erdma_reg_writeXX has memory barrier implicitly */
+	set_bit(ERDMA_STATE_AEQ_INIT_DONE, &dev->state);
 
 	return 0;
 }

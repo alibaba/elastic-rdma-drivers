@@ -63,13 +63,16 @@ struct erdma_ucontext {
 struct erdma_pd {
 	struct ib_pd ibpd;
 	u32 pdn;
+#ifdef HAVE_ERDMA_MAD
+	struct sw_pd *sw_pd;
+#endif
 };
 
 /*
  * MemoryRegion definition.
  */
 #define ERDMA_MAX_INLINE_MTT_ENTRIES 4
-#define MTT_SIZE(mtt_cnt) (mtt_cnt << 3) /* per mtt takes 8 Bytes. */
+#define MTT_SIZE(mtt_cnt) ((mtt_cnt) << 3) /* per mtt takes 8 Bytes. */
 #define ERDMA_MR_MAX_MTT_CNT 524288
 #define ERDMA_MTT_ENTRY_SIZE 8
 
@@ -94,19 +97,34 @@ static inline u8 to_erdma_access_flags(int access)
 	       (access & IB_ACCESS_REMOTE_ATOMIC ? ERDMA_MR_ACC_RA : 0);
 }
 
+struct erdma_pbl {
+	u64 *buf;
+	size_t size;
+
+	bool continuous;
+	union {
+		dma_addr_t buf_dma;
+		struct {
+			struct scatterlist *sglist;
+			u32 nsg;
+			u32 level;
+		};
+	};
+
+	struct erdma_pbl *low_level;
+};
+
 struct erdma_mem {
 	struct ib_umem *umem;
-	void *mtt_buf;
-	u32 mtt_type;
 	u32 page_size;
 	u32 page_offset;
 	u32 page_cnt;
 	u32 mtt_nents;
 
+	struct erdma_pbl *pbl;
+
 	u64 va;
 	u64 len;
-
-	u64 mtt_entry[ERDMA_MAX_INLINE_MTT_ENTRIES];
 };
 
 struct erdma_mr {
@@ -172,11 +190,6 @@ enum erdma_qp_state {
 	ERDMA_QP_STATE_COUNT = 8
 };
 
-enum erdma_qp_flags {
-	ERDMA_QP_IN_DESTROY = (1 << 0),
-	ERDMA_QP_IN_FLUSHING = (1 << 1),
-};
-
 enum erdma_qp_attr_mask {
 	ERDMA_QP_ATTR_STATE = (1 << 0),
 	ERDMA_QP_ATTR_LLP_HANDLE = (1 << 2),
@@ -185,6 +198,11 @@ enum erdma_qp_attr_mask {
 	ERDMA_QP_ATTR_SQ_SIZE = (1 << 5),
 	ERDMA_QP_ATTR_RQ_SIZE = (1 << 6),
 	ERDMA_QP_ATTR_MPA = (1 << 7)
+};
+
+enum erdma_qp_flags {
+	ERDMA_QP_IN_DESTROY = (1 << 0),
+	ERDMA_QP_IN_FLUSHING = (1 << 1),
 };
 
 struct erdma_qp_attrs {
@@ -205,8 +223,6 @@ struct erdma_qp_attrs {
 	u8 qp_type;
 	u8 pd_len;
 	bool connect_without_cm;
-	__u32 sip;
-	__u32 dip;
 	__u16 sport;
 	__u16 dport;
 	union {
@@ -220,11 +236,17 @@ struct erdma_qp_attrs {
 
 struct erdma_qp {
 	struct ib_qp ibqp;
+#ifdef HAVE_ERDMA_MAD
+	struct sw_qp *sw_qp;
+#endif
 	struct kref ref;
 	struct completion safe_free;
 	struct erdma_dev *dev;
 	struct erdma_cep *cep;
 	struct rw_semaphore state_lock;
+
+	unsigned long flags;
+	struct delayed_work reflush_dwork;
 
 	union {
 		struct erdma_kqp kern_qp;
@@ -235,8 +257,6 @@ struct erdma_qp {
 	struct erdma_cq *rcq;
 
 	struct erdma_qp_attrs attrs;
-	unsigned long flags;
-	struct delayed_work reflush_dwork;
 
 #ifndef HAVE_RDMA_RESTRACK_ENTRY_USER
 	int user;
@@ -286,13 +306,17 @@ struct erdma_cq {
 	int user;
 #endif
 	struct erdma_dim dim;
+#ifdef HAVE_ERDMA_MAD
+	bool is_soft;
+	struct sw_cq *sw_cq;
+#endif
 };
 
 #define QP_ID(qp) ((qp)->ibqp.qp_num)
 
 static inline struct erdma_qp *find_qp_by_qpn(struct erdma_dev *dev, int id)
 {
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 	return (struct erdma_qp *)xa_load(&dev->qp_xa, id);
 #else
 	return (struct erdma_qp *)idr_find(&dev->qp_idr, id);
@@ -301,7 +325,7 @@ static inline struct erdma_qp *find_qp_by_qpn(struct erdma_dev *dev, int id)
 
 static inline struct erdma_cq *find_cq_by_cqn(struct erdma_dev *dev, int id)
 {
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 	return (struct erdma_cq *)xa_load(&dev->cq_xa, id);
 #else
 	return (struct erdma_cq *)idr_find(&dev->cq_idr, id);
@@ -461,42 +485,13 @@ enum rdma_link_layer erdma_get_link_layer(struct ib_device *dev,
 					  port_t port_num);
 int erdma_query_pkey(struct ib_device *ibdev, port_t port, u16 index,
 		     u16 *pkey);
-
-#ifndef HAVE_AH_CORE_ALLOCATION
-#ifdef HAVE_CREATE_DESTROY_AH_FLAGS
-struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct rdma_ah_attr *ah_attr,
-			       u32 flags, struct ib_udata *udata);
-#elif defined(HAVE_CREATE_AH_RDMA_ATTR)
-struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct rdma_ah_attr *ah_attr,
-			       struct ib_udata *udata);
-#else
-struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr);
-#endif
-#endif
-
-#ifdef HAVE_AH_CORE_ALLOCATION_DESTROY_RC
-int erdma_destroy_ah(struct ib_ah *ibah, u32 flags);
-#elif defined(HAVE_AH_CORE_ALLOCATION)
-void erdma_destroy_ah(struct ib_ah *ibah, u32 flags);
-#elif defined(HAVE_CREATE_DESTROY_AH_FLAGS)
-int erdma_destroy_ah(struct ib_ah *ibah, u32 flags);
-#else
-int erdma_destroy_ah(struct ib_ah *ibah);
-#endif
 int erdma_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
 
 int erdma_query_hw_stats(struct erdma_dev *dev);
-
-#ifdef HAVE_OLD_GID_OPERATION
-int erdma_add_gid(const struct ib_gid_attr *attr, void **context);
-
-int erdma_del_gid(const struct ib_gid_attr *attr, void **context);
-#else
-int erdma_add_gid(struct ib_device *device, u8 port_num, unsigned int index,
-		  const union ib_gid *gid, const struct ib_gid_attr *attr,
-		  void **context);
-
-int erdma_del_gid(struct ib_device *device, u8 port_num, unsigned int index,
-		  void **context);
+#ifdef HAVE_GET_VECTOR_AFFINITY
+const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev, int comp_vector);
 #endif
+
+#include "erdma_compat.h"
+
 #endif

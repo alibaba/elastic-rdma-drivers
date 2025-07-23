@@ -115,7 +115,7 @@ static struct erdma_cep *erdma_cep_alloc(struct erdma_dev *dev)
 	spin_unlock_irqrestore(&dev->lock, flags);
 	atomic_inc(&dev->num_cep);
 
-	dprint(DBG_CM, "(CEP 0x%p): New Object\n", cep);
+	ibdev_dbg(&dev->ibdev, "(CEP 0x%p): New Object\n", cep);
 	return cep;
 }
 
@@ -155,7 +155,7 @@ static void erdma_put_work(struct erdma_cm_work *work)
 static void erdma_cep_set_inuse(struct erdma_cep *cep)
 {
 	unsigned long flags;
-	dprint(DBG_CM, " (CEP 0x%p): use %d\n", cep, cep->in_use);
+	ibdev_dbg(&cep->dev->ibdev, " (CEP 0x%p): use %d\n", cep, cep->in_use);
 
 	spin_lock_irqsave(&cep->lock, flags);
 	while (cep->in_use) {
@@ -164,7 +164,8 @@ static void erdma_cep_set_inuse(struct erdma_cep *cep)
 		if (signal_pending(current))
 			flush_signals(current);
 
-		dprint(DBG_CM, " (CEP 0x%p): use %d\n", cep, cep->in_use);
+		ibdev_dbg(&cep->dev->ibdev, " (CEP 0x%p): use %d\n", cep,
+			  cep->in_use);
 		spin_lock_irqsave(&cep->lock, flags);
 	}
 
@@ -176,7 +177,7 @@ static void erdma_cep_set_free(struct erdma_cep *cep)
 {
 	unsigned long flags;
 
-	dprint(DBG_CM, " (CEP 0x%p): use %d\n", cep, cep->in_use);
+	ibdev_dbg(&cep->dev->ibdev, " (CEP 0x%p): use %d\n", cep, cep->in_use);
 
 	spin_lock_irqsave(&cep->lock, flags);
 	cep->in_use = 0;
@@ -231,7 +232,7 @@ static int erdma_cm_alloc_work(struct erdma_cep *cep, int num)
 		if (!work) {
 			if (!(list_empty(&cep->work_freelist)))
 				erdma_cm_free_work(cep);
-			dprint(DBG_ON, " Failed\n");
+			ibdev_dbg(&cep->dev->ibdev, " CEP alloc work failed\n");
 			return -ENOMEM;
 		}
 		work->cep = cep;
@@ -275,10 +276,11 @@ static int erdma_cm_upcall(struct erdma_cep *cep, enum iw_cm_event_type reason,
 		getname_peer(cep->sock, &event.remote_addr);
 	}
 
-	dprint(DBG_CM,
-	       " (QP%d): cep=0x%p, id=0x%p, dev(id)=%s, reason=%d, status=%d\n",
-	       cep->qp ? QP_ID(cep->qp) : -1, cep, cm_id, cm_id->device->name,
-	       reason, status);
+	ibdev_dbg(
+		&cep->dev->ibdev,
+		" (QP%d): cep=0x%p, id=0x%p, dev(id)=%s, reason=%d, status=%d\n",
+		cep->qp ? QP_ID(cep->qp) : -1, cep, cm_id, cm_id->device->name,
+		reason, status);
 
 	return cm_id->event_handler(cm_id, &event);
 }
@@ -293,10 +295,11 @@ void erdma_qp_cm_drop(struct erdma_qp *qp)
 	/*
 	 * Immediately close socket
 	 */
-	dprint(DBG_CM,
-	       "(): immediate close, cep=0x%p, state=%d, id=0x%p, sock=0x%p, QP%d\n",
-	       cep, cep->state, cep->cm_id, cep->sock,
-	       cep->qp ? QP_ID(cep->qp) : -1);
+	ibdev_dbg(
+		&qp->dev->ibdev,
+		"(): immediate close, cep=0x%p, state=%d, id=0x%p, sock=0x%p, QP%d\n",
+		cep, cep->state, cep->cm_id, cep->sock,
+		cep->qp ? QP_ID(cep->qp) : -1);
 
 	erdma_cep_set_inuse(cep);
 
@@ -344,8 +347,8 @@ out:
 
 void erdma_cep_put(struct erdma_cep *cep)
 {
-	dprint(DBG_CM, "(CEP 0x%p): New refcount: %d\n", cep,
-	       kref_read(&cep->ref) - 1);
+	ibdev_dbg(&cep->dev->ibdev, "(CEP 0x%p): New refcount: %d\n", cep,
+		  kref_read(&cep->ref) - 1);
 
 	WARN_ON(kref_read(&cep->ref) < 1);
 	kref_put(&cep->ref, __erdma_cep_dealloc);
@@ -355,8 +358,8 @@ void erdma_cep_get(struct erdma_cep *cep)
 {
 	kref_get(&cep->ref);
 
-	dprint(DBG_CM, "(CEP 0x%p): New refcount: %d\n", cep,
-	       kref_read(&cep->ref));
+	ibdev_dbg(&cep->dev->ibdev, "(CEP 0x%p): New refcount: %d\n", cep,
+		  kref_read(&cep->ref));
 }
 
 static int erdma_send_mpareqrep(struct erdma_cep *cep, const void *pdata,
@@ -515,7 +518,7 @@ static int erdma_recv_mpa_rr(struct erdma_cep *cep)
 			return 0;
 
 		if (ret) {
-			dprint(DBG_CM, " ERROR: %d:\n", ret);
+			ibdev_dbg(&cep->dev->ibdev, " ERROR: %d:\n", ret);
 			return ret;
 		}
 
@@ -543,7 +546,8 @@ static int erdma_recv_mpa_rr(struct erdma_cep *cep)
 	cep->mpa.bytes_rcvd += rcvd;
 
 	if (to_rcv == rcvd) {
-		dprint(DBG_CM, " %d bytes private_data received\n", pd_len);
+		ibdev_dbg(&cep->dev->ibdev, " %d bytes private_data received\n",
+			  pd_len);
 		return 0;
 	}
 
@@ -701,8 +705,9 @@ static void erdma_accept_newconn(struct erdma_cep *cep)
 
 	ret = kernel_accept(s, &new_s, O_NONBLOCK);
 	if (ret != 0) {
-		dprint(DBG_CM | DBG_ON,
-		       "(cep=0x%p): ERROR: kernel_accept(): rv=%d\n", cep, ret);
+		ibdev_dbg(&cep->dev->ibdev,
+			  "(cep=0x%p): ERROR: kernel_accept(): rv=%d\n", cep,
+			  ret);
 
 		goto error;
 	}
@@ -711,9 +716,10 @@ static void erdma_accept_newconn(struct erdma_cep *cep)
 	erdma_cep_get(new_cep);
 	new_s->sk->sk_user_data = new_cep;
 
-	dprint(DBG_CM,
-	       "(cep=0x%p, s=0x%p, new_s=0x%p): New LLP connection accepted\n",
-	       cep, s, new_s);
+	ibdev_dbg(
+		&cep->dev->ibdev,
+		"(cep=0x%p, s=0x%p, new_s=0x%p): New LLP connection accepted\n",
+		cep, s, new_s);
 
 	tcp_sock_set_nodelay(new_s->sk);
 	new_cep->state = ERDMA_EPSTATE_AWAIT_MPAREQ;
@@ -726,7 +732,8 @@ static void erdma_accept_newconn(struct erdma_cep *cep)
 	erdma_cep_get(cep);
 
 	if (atomic_read(&new_s->sk->sk_rmem_alloc)) {
-		dprint(DBG_CM, "(cep=0x%p): Immediate MPA req.\n", cep);
+		ibdev_dbg(&cep->dev->ibdev, "(cep=0x%p): Immediate MPA req.\n",
+			  cep);
 		/* MPA REQ already queued */
 		erdma_cep_set_inuse(new_cep);
 		ret = erdma_proc_mpareq(new_cep);
@@ -755,7 +762,7 @@ error:
 		erdma_socket_disassoc(new_s);
 		sock_release(new_s);
 	}
-	dprint(DBG_CM | DBG_ON, "(cep=0x%p): ERROR: rv=%d\n", cep, ret);
+	ibdev_dbg(&cep->dev->ibdev, "(cep=0x%p): ERROR: rv=%d\n", cep, ret);
 }
 
 static int erdma_newconn_connected(struct erdma_cep *cep)
@@ -790,8 +797,8 @@ static void erdma_cm_work_handler(struct work_struct *w)
 	cep = work->cep;
 	dev = cep->dev;
 
-	dprint(DBG_CM, " (QP%d): WORK type: %d, CEP: 0x%p, state: %d\n",
-	       cep->qp ? QP_ID(cep->qp) : -1, work->type, cep, cep->state);
+	ibdev_dbg(&dev->ibdev, " (QP%d): WORK type: %d, CEP: 0x%p, state: %d\n",
+		  cep->qp ? QP_ID(cep->qp) : -1, work->type, cep, cep->state);
 
 	erdma_cep_set_inuse(cep);
 
@@ -906,10 +913,11 @@ static void erdma_cm_work_handler(struct work_struct *w)
 	}
 
 	if (release_cep) {
-		dprint(DBG_CM,
-		       " (CEP 0x%p): Release: mpa_timer=%s, sock=0x%p, QP%d, id=0x%p\n",
-		       cep, cep->mpa_timer ? "y" : "n", cep->sock,
-		       cep->qp ? QP_ID(cep->qp) : -1, cep->cm_id);
+		ibdev_dbg(
+			&cep->dev->ibdev,
+			" (CEP 0x%p): Release: mpa_timer=%s, sock=0x%p, QP%d, id=0x%p\n",
+			cep, cep->mpa_timer ? "y" : "n", cep->sock,
+			cep->qp ? QP_ID(cep->qp) : -1, cep->cm_id);
 
 		erdma_cancel_mpatimer(cep);
 		cep->state = ERDMA_EPSTATE_CLOSED;
@@ -945,7 +953,8 @@ static void erdma_cm_work_handler(struct work_struct *w)
 	}
 	erdma_cep_set_free(cep);
 
-	dprint(DBG_CM, " (Exit): WORK type: %d, CEP: 0x%p\n", work->type, cep);
+	ibdev_dbg(&cep->dev->ibdev, " (Exit): WORK type: %d, CEP: 0x%p\n",
+		  work->type, cep);
 	erdma_put_work(work);
 	erdma_cep_put(cep);
 }
@@ -978,9 +987,9 @@ int erdma_cm_queue_work(struct erdma_cep *cep, enum erdma_work_type type)
 		delay = CONNECT_TIMEOUT;
 	}
 
-	dprint(DBG_CM,
-	       " (QP%d): WORK type: %d, CEP: 0x%p, work 0x%p, timeout %lu\n",
-	       cep->qp ? QP_ID(cep->qp) : -1, type, cep, work, delay);
+	ibdev_dbg(&cep->dev->ibdev,
+		  " (QP%d): WORK type: %d, CEP: 0x%p, work 0x%p, timeout %lu\n",
+		  cep->qp ? QP_ID(cep->qp) : -1, type, cep, work, delay);
 
 	queue_delayed_work(erdma_cm_wq, &work->work, delay);
 
@@ -1001,7 +1010,8 @@ static void erdma_cm_llp_data_ready(struct sock *sk, int unsed)
 	if (!cep)
 		goto out;
 
-	dprint(DBG_CM, "(): cep 0x%p, state: %d\n", cep, cep->state);
+	ibdev_dbg(&cep->dev->ibdev, "(): cep 0x%p, state: %d\n", cep,
+		  cep->state);
 
 	if (cep->state == ERDMA_EPSTATE_AWAIT_MPAREQ ||
 	    cep->state == ERDMA_EPSTATE_AWAIT_MPAREP)
@@ -1015,7 +1025,8 @@ static void erdma_cm_llp_error_report(struct sock *sk)
 {
 	struct erdma_cep *cep = sk_to_cep(sk);
 
-	dprint(DBG_CM, "(): error: %d, state: %d\n", sk->sk_err, sk->sk_state);
+	ibdev_dbg(&cep->dev->ibdev, "(): error: %d, state: %d\n", sk->sk_err,
+		  sk->sk_state);
 
 	if (cep)
 		cep->sk_error_report(sk);
@@ -1035,8 +1046,8 @@ static void erdma_cm_llp_state_change(struct sock *sk)
 	}
 	orig_state_change = cep->sk_state_change;
 
-	dprint(DBG_CM, "(): cep: 0x%p, state: %d, tcp_state: %d\n", cep,
-	       cep->state, sk->sk_state);
+	ibdev_dbg(&cep->dev->ibdev, "(): cep: 0x%p, state: %d, tcp_state: %d\n",
+		  cep, cep->state, sk->sk_state);
 
 	switch (sk->sk_state) {
 	case TCP_ESTABLISHED:
@@ -1058,21 +1069,25 @@ static void erdma_cm_llp_state_change(struct sock *sk)
 }
 
 static int kernel_bindconnect(struct socket *s, struct sockaddr *laddr,
-			      int laddrlen, struct sockaddr *raddr,
-			      int raddrlen, int flags)
+			      struct sockaddr *raddr, int flags)
 {
+	size_t size = laddr->sa_family == AF_INET ?
+		sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 	int ret;
 
 	sock_set_reuseaddr(s->sk);
-	ret = s->ops->bind(s, laddr, laddrlen);
+	ret = s->ops->bind(s, laddr, size);
 	if (ret) {
-		((struct sockaddr_in *)laddr)->sin_port = 0;
-		ret = s->ops->bind(s, laddr, laddrlen);
+		if (laddr->sa_family == AF_INET)
+			((struct sockaddr_in *)laddr)->sin_port = 0;
+		else
+			((struct sockaddr_in6 *)laddr)->sin6_port = 0;
+		ret = s->ops->bind(s, laddr, size);
 		if (ret)
 			return ret;
 	}
 
-	ret = s->ops->connect(s, raddr, raddrlen, flags);
+	ret = s->ops->connect(s, raddr, size, flags);
 	return ret < 0 ? ret : 0;
 }
 
@@ -1085,6 +1100,7 @@ int erdma_connect(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 	struct sockaddr *laddr = (struct sockaddr *)&id->m_local_addr;
 	struct sockaddr *raddr = (struct sockaddr *)&id->m_remote_addr;
 	u16 pd_len = params->private_data_len;
+	bool v4 = false;
 	int ret;
 
 	ERDMA_INC_CNT(dev, IW_CONNECT);
@@ -1100,7 +1116,12 @@ int erdma_connect(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 		return -EINVAL;
 	}
 
-	if (laddr->sa_family != AF_INET || raddr->sa_family != AF_INET) {
+	if (laddr->sa_family == AF_INET && raddr->sa_family == AF_INET) {
+		v4 = true;
+	} else if (laddr->sa_family != AF_INET6 || raddr->sa_family != AF_INET6) {
+		ERDMA_INC_CNT(dev, IW_CONNECT_FAILED);
+		return -EAFNOSUPPORT;
+	} else if (!(dev->attrs.cap_flags & ERDMA_DEV_CAP_FLAGS_IPV6)) {
 		ERDMA_INC_CNT(dev, IW_CONNECT_FAILED);
 		return -EAFNOSUPPORT;
 	}
@@ -1112,20 +1133,21 @@ int erdma_connect(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 	}
 	erdma_qp_get(qp);
 
-	dprint(DBG_CM, "(id=0x%p, QP%d): dev(id)=%s, netdev=%s\n", id,
-	       QP_ID(qp), dev->ibdev.name, dev->netdev->name);
-	dprint(DBG_CM,
-	       "(id=0x%p, QP%d): laddr=(0x%x,%d,mport %d), raddr=(0x%x,%d,mport %d)\n",
-	       id, QP_ID(qp),
-	       ntohl(to_sockaddr_in(id->local_addr).sin_addr.s_addr),
-	       ntohs(to_sockaddr_in(id->local_addr).sin_port),
-	       ntohs(to_sockaddr_in(id->m_local_addr).sin_port),
-	       ntohl(to_sockaddr_in(id->remote_addr).sin_addr.s_addr),
-	       ntohs(to_sockaddr_in(id->remote_addr).sin_port),
-	       ntohs(to_sockaddr_in(id->m_remote_addr).sin_port));
+	ibdev_dbg(&dev->ibdev, "(id=0x%p, QP%d): dev(id)=%s, netdev=%s\n", id,
+		  QP_ID(qp), dev->ibdev.name, dev->netdev->name);
+	ibdev_dbg(
+		&dev->ibdev,
+		"(id=0x%p, QP%d): laddr=(0x%x,%d,mport %d), raddr=(0x%x,%d,mport %d)\n",
+		id, QP_ID(qp),
+		ntohl(to_sockaddr_in(id->local_addr).sin_addr.s_addr),
+		ntohs(to_sockaddr_in(id->local_addr).sin_port),
+		ntohs(to_sockaddr_in(id->m_local_addr).sin_port),
+		ntohl(to_sockaddr_in(id->remote_addr).sin_addr.s_addr),
+		ntohs(to_sockaddr_in(id->remote_addr).sin_port),
+		ntohs(to_sockaddr_in(id->m_remote_addr).sin_port));
 
-	ret = __sock_create(current->nsproxy->net_ns, AF_INET,
-			SOCK_STREAM, IPPROTO_TCP, &s, 1);
+	ret = __sock_create(current->nsproxy->net_ns, v4 ? AF_INET : AF_INET6,
+			    SOCK_STREAM, IPPROTO_TCP, &s, 1);
 	if (ret < 0)
 		goto error_put_qp;
 
@@ -1162,8 +1184,8 @@ int erdma_connect(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 	cep->ord = params->ord;
 	cep->state = ERDMA_EPSTATE_CONNECTING;
 
-	dprint(DBG_CM, " (id=0x%p, QP%d): pd_len = %u\n", id, QP_ID(qp),
-	       pd_len);
+	ibdev_dbg(&dev->ibdev, " (id=0x%p, QP%d): pd_len = %u\n", id, QP_ID(qp),
+		  pd_len);
 
 	erdma_cep_socket_assoc(cep, s);
 
@@ -1179,8 +1201,7 @@ int erdma_connect(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 		       params->private_data_len);
 	}
 
-	ret = kernel_bindconnect(s, laddr, sizeof(*laddr), raddr,
-				 sizeof(*raddr), O_NONBLOCK);
+	ret = kernel_bindconnect(s, laddr, raddr, O_NONBLOCK);
 	if (ret != -EINPROGRESS && ret != 0) {
 		goto error_disassoc;
 	} else if (ret == 0) {
@@ -1197,7 +1218,7 @@ int erdma_connect(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 	return 0;
 
 error_disassoc:
-	dprint(DBG_CM, " Failed: %d\n", ret);
+	ibdev_dbg(&dev->ibdev, " Failed: %d\n", ret);
 	kfree(cep->private_data);
 	cep->private_data = NULL;
 	cep->pd_len = 0;
@@ -1338,7 +1359,8 @@ int erdma_accept(struct iw_cm_id *id, struct iw_cm_conn_param *params)
 
 		erdma_cep_set_free(cep);
 
-		dprint(DBG_CM, "(id=0x%p, QP%d): Exit\n", id, QP_ID(qp));
+		ibdev_dbg(&dev->ibdev, "(id=0x%p, QP%d): Exit\n", id,
+			  QP_ID(qp));
 		ERDMA_INC_CNT(dev, IW_ACCEPT_SUCCESS);
 		return 0;
 	}
@@ -1390,8 +1412,9 @@ int erdma_reject(struct iw_cm_id *id, const void *pdata, u8 plen)
 		return -ECONNRESET;
 	}
 
-	dprint(DBG_CM, "(id=0x%p): cep->state=%d\n", id, cep->state);
-	dprint(DBG_CM, " Reject: %d: %x\n", plen, plen ? *(char *)pdata : 0);
+	ibdev_dbg(&dev->ibdev, "(id=0x%p): cep->state=%d\n", id, cep->state);
+	ibdev_dbg(&dev->ibdev, " Reject: %d: %x\n", plen,
+		  plen ? *(char *)pdata : 0);
 
 	if (__mpa_rr_revision(cep->mpa.hdr.params.bits) == MPA_REVISION_EXT_1) {
 		cep->mpa.hdr.params.bits |= MPA_RR_FLAG_REJECT; /* reject */
@@ -1412,7 +1435,6 @@ int erdma_reject(struct iw_cm_id *id, const void *pdata, u8 plen)
 
 int erdma_create_listen(struct iw_cm_id *id, int backlog)
 {
-	struct sockaddr_in *laddr = &to_sockaddr_in(id->local_addr);
 	struct erdma_dev *dev = to_edev(id->device);
 	int addr_family = id->local_addr.ss_family;
 	struct erdma_cep *cep = NULL;
@@ -1423,11 +1445,12 @@ int erdma_create_listen(struct iw_cm_id *id, int backlog)
 
 	if (addr_family != AF_INET) {
 		ERDMA_INC_CNT(dev, IW_LISTEN_IPV6);
-		return -EAFNOSUPPORT;
+		if (!(dev->attrs.cap_flags & ERDMA_DEV_CAP_FLAGS_IPV6))
+			return -EAFNOSUPPORT;
 	}
 
-	ret = __sock_create(current->nsproxy->net_ns, addr_family,
-			SOCK_STREAM, IPPROTO_TCP, &s, 1);
+	ret = __sock_create(current->nsproxy->net_ns, addr_family, SOCK_STREAM,
+			    IPPROTO_TCP, &s, 1);
 	if (ret < 0) {
 		ERDMA_INC_CNT(dev, IW_LISTEN_FAILED);
 		return ret;
@@ -1436,13 +1459,20 @@ int erdma_create_listen(struct iw_cm_id *id, int backlog)
 	sock_set_reuseaddr(s->sk);
 
 	/* For wildcard addr, limit binding to current device only */
-#ifndef HAVE_SET_NON_SK_BOUND_IF
-	if (ipv4_is_zeronet(laddr->sin_addr.s_addr))
-		s->sk->sk_bound_dev_if = dev->netdev->ifindex;
-#endif
 
-	ret = s->ops->bind(s, (struct sockaddr *)laddr,
+	if (addr_family == AF_INET) {
+		struct sockaddr_in *laddr = &to_sockaddr_in(id->local_addr);
+#ifndef HAVE_SET_NON_SK_BOUND_IF
+		if (ipv4_is_zeronet(laddr->sin_addr.s_addr) && use_zeronet)
+			s->sk->sk_bound_dev_if = dev->netdev->ifindex;
+#endif
+		ret = s->ops->bind(s, (struct sockaddr *)laddr,
 			   sizeof(struct sockaddr_in));
+	} else {
+		struct sockaddr_in6 *laddr = &to_sockaddr_in6(id->local_addr);
+		ret = s->ops->bind(s, (struct sockaddr *)laddr,
+			   sizeof(struct sockaddr_in6));
+	}
 	if (ret)
 		goto error;
 
@@ -1474,10 +1504,11 @@ int erdma_create_listen(struct iw_cm_id *id, int backlog)
 		INIT_LIST_HEAD((struct list_head *)id->provider_data);
 	}
 
-	dprint(DBG_CM,
-	       "(id=0x%p): dev(id)=%s, netdev=%s, id->provider_data=0x%p, cep=0x%p\n",
-	       id, id->device->name, to_edev(id->device)->netdev->name,
-	       id->provider_data, cep);
+	ibdev_dbg(
+		&dev->ibdev,
+		"(id=0x%p): dev(id)=%s, netdev=%s, id->provider_data=0x%p, cep=0x%p\n",
+		id, id->device->name, to_edev(id->device)->netdev->name,
+		id->provider_data, cep);
 
 	list_add_tail(&cep->listenq, (struct list_head *)id->provider_data);
 	cep->state = ERDMA_EPSTATE_LISTENING;
@@ -1487,7 +1518,7 @@ int erdma_create_listen(struct iw_cm_id *id, int backlog)
 	return 0;
 
 error:
-	dprint(DBG_CM, " Failed: %d\n", ret);
+	ibdev_dbg(&dev->ibdev, " Failed: %d\n", ret);
 
 	if (cep) {
 		erdma_cep_set_inuse(cep);
@@ -1522,8 +1553,9 @@ static void erdma_drop_listeners(struct iw_cm_id *id)
 			list_entry(p, struct erdma_cep, listenq);
 
 		list_del(p);
-		dprint(DBG_CM, "(id=0x%p): drop CEP 0x%p, state %d\n", id, cep,
-		       cep->state);
+		ibdev_dbg(&cep->dev->ibdev,
+			  "(id=0x%p): drop CEP 0x%p, state %d\n", id, cep,
+			  cep->state);
 		erdma_cep_set_inuse(cep);
 
 		if (cep->cm_id) {
@@ -1545,8 +1577,8 @@ int erdma_destroy_listen(struct iw_cm_id *id)
 {
 	struct erdma_dev *dev = to_edev(id->device);
 
-	dprint(DBG_CM, "(id=0x%p): dev(id)=%s, netdev=%s\n", id,
-	       id->device->name, dev->netdev->name);
+	ibdev_dbg(&dev->ibdev, "(id=0x%p): dev(id)=%s, netdev=%s\n", id,
+		  id->device->name, dev->netdev->name);
 
 	if (!id->provider_data)
 		return 0;
@@ -1559,65 +1591,11 @@ int erdma_destroy_listen(struct iw_cm_id *id)
 	return 0;
 }
 
-extern bool compat_mode;
-struct socket *rsvd_sock[16];
-
-static int erdma_port_init(void)
-{
-	int ret = 0, i, j;
-	struct sockaddr_in laddr;
-
-	if (!compat_mode)
-		return 0;
-
-	for (i = 0; i < 16; i++) {
-		ret = __sock_create(current->nsproxy->net_ns, AF_INET,
-				SOCK_STREAM, IPPROTO_TCP, &rsvd_sock[i], 1);
-		if (ret < 0)
-			goto err_out;
-		memset(&laddr, 0, sizeof(struct sockaddr_in));
-		laddr.sin_port = htons(COMPAT_PORT_BASE + i);
-		ret = rsvd_sock[i]->ops->bind(rsvd_sock[i], (struct sockaddr *)&laddr,
-				sizeof(struct sockaddr_in));
-		if (ret) {
-			sock_release(rsvd_sock[i]);
-			goto err_out;
-		}
-	}
-
-	return 0;
-
-err_out:
-	for (j = 0; j < i; j++)
-		sock_release(rsvd_sock[j]);
-
-	return ret;
-}
-
-static void erdma_port_release(void)
-{
-	int i;
-
-	if (!compat_mode)
-		return;
-
-	for (i = 0; i < 16; i++)
-		sock_release(rsvd_sock[i]);
-}
-
 int erdma_cm_init(void)
 {
-	int ret;
-
-	ret = erdma_port_init();
-	if (ret)
-		return ret;
-
 	erdma_cm_wq = create_singlethread_workqueue("erdma_cm_wq");
-	if (!erdma_cm_wq) {
-		erdma_port_release();
+	if (!erdma_cm_wq)
 		return -ENOMEM;
-	}
 
 	return 0;
 }
@@ -1626,5 +1604,4 @@ void erdma_cm_exit(void)
 {
 	if (erdma_cm_wq)
 		destroy_workqueue(erdma_cm_wq);
-	erdma_port_release();
 }

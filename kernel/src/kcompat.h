@@ -11,17 +11,23 @@
 #ifndef __KCOMPAT_H__
 #define __KCOMPAT_H__
 
+#include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/types.h>
 #include "config.h"
 
 #define ERDMA_MAJOR_VER 0
 #define ERDMA_MEDIUM_VER 2
-#define ERDMA_MINOR_VER 35
+#define ERDMA_MINOR_VER 37
 
 #include <rdma/ib_verbs.h>
 #ifndef RDMA_DRIVER_ERDMA
 #define RDMA_DRIVER_ERDMA 19
+#endif
+
+#ifndef upper_16_bits
+#define upper_16_bits(n) ((u16)((n) >> 16))
+#define lower_16_bits(n) ((u16)((n) & 0xffff))
 #endif
 
 #if !defined(HAVE_RDMA_UMEM_FOR_EACH_DMA_BLOCK) &&                             \
@@ -172,7 +178,7 @@ static inline int tcp_sock_set_nodelay(struct sock *sk)
 }
 #endif
 
-#ifndef HAVE_SOCK_SET_REUSEADDR
+#ifndef HAVE_SK_SET_REUSEADDR
 static inline void sock_set_reuseaddr(struct sock *sk)
 {
 	lock_sock(sk);
@@ -253,12 +259,27 @@ struct iw_ext_conn_param {
 };
 #endif
 
+#ifndef HAVE_NET_RWSEM
+/* Provide dummmy net_rwsem */
+extern struct rw_semaphore net_rwsem;
+#endif
+
 #ifndef HAVE_IB_DEVICE_GET_BY_NAME
 struct ib_device *ib_device_get_by_name(const char *name,
 					unsigned int driver_id);
 
 void ib_device_put(struct ib_device *device);
 
+#endif
+
+#ifndef HAVE_IB_DEVICE_GET_BY_NETDEV
+struct ib_device *ib_device_get_by_netdev(struct net_device *ndev,
+					  unsigned int driver_id);
+#endif
+
+#ifndef HAVE_IB_DEVICE_SET_NETDEV
+int ib_device_set_netdev(struct ib_device *ib_dev, struct net_device *ndev,
+			 unsigned int port);
 #endif
 
 #ifndef HAVE_KREF_READ
@@ -268,7 +289,7 @@ static inline int kref_read(const struct kref *kref)
 }
 #endif
 
-#ifndef HAVE_XARRAY
+#ifndef HAVE_XARRAY_API
 static inline int idr_alloc_cyclic_safe(struct idr *idr, int *id, void *ptr,
 					spinlock_t *lock, int *next, int max)
 {
@@ -322,6 +343,17 @@ static inline size_t ib_umem_num_dma_blocks(struct ib_umem *umem,
 	return (size_t)((ALIGN(umem->address + umem->length, pgsz) -
 			 ALIGN_DOWN(umem->address, pgsz))) /
 	       pgsz;
+}
+#endif
+
+#ifndef HAVE_BYTEORDER_ARRAY_API
+#include <asm/byteorder.h>
+static inline void be32_to_cpu_array(u32 *dst, const __be32 *src, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		dst[i] = be32_to_cpu(src[i]);
 }
 #endif
 

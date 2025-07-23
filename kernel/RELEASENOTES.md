@@ -1,7 +1,56 @@
 # ERDMA Linux Kernel Driver Release Notes
 
 ## Supported Kernel Versions and Distributions
-TBD
+Generally speaking, this driver already support for almost all current
+distributions of CentOS, Ubuntu, Alinux and Anolis. But for stability,
+verified systems is recommended which listed below:
+* CentOS 7.6/7.9/8.4/8.5
+* Ubuntu 18.04/22.04
+* Alinux 2/3
+* Anolis 8.4/8.5
+
+## r0.2.37
+* RDMA/erdma: Add d-ack capbility and d-ack count setting support
+* RDMA/erdma: Add get_vecotr_affinity support
+* RDMA/erdma: Add SMC-R IPv6 support and do some cleaning
+* RDMA/erdma: Add rendezvous flag and remote qpn in modifying SMC-R qp
+* RDMA/erdma: No shift in page size field in REG MR wr
+* RDMA/erdma: Add page size available bit and page size field
+* RDMA/erdma: Clear the size field in MR because some MOC versions check it
+* RDMA/erdma: Add IPv6 support for iwarp mode and OOB mode
+* RDMA/erdma: Use fixed default device name
+* RDMA/erdma: Revert compat_mode port immutable implementation
+* RDMA/erdma: Fix wrong usage of wrlock
+* RDMA/erdma: Reduce compat_mode usage
+* RDMA/erdma: Unify create_ah/destroy_ah interface
+* RDMA/erdma: Remove unused register definitions.
+* RDMA/erdma: Refactor compat related code to [k|erdma_]compat.h
+* RDMA/erdma: Format code style by clang-format
+* RDMA/erdma: Support scatter mtt
+* RDMA/erdma: Refactor MTT buffer management
+* RDMA/erdma: Optimize some macro definitions and add new fields of CMD
+* RDMA/erdma: Add atomic operation support for kernel verbs
+* RDMA/erdma: Change position of some related definitions
+* RDMA/erdma: Fix memleak in mad qp destroying
+
+## r0.2.36
+* RDMA/erdma: Add copyright of build script
+* RDMA/erdma: Refactor cmake build script
+* RDMA/erdma: Update CMakefile to fix compat mode default
+* RDMA/erdma: Add RDMA_CM support for compat mode
+* RDMA/erdma: Report pkey_tbl_len = 1 in compat_mode
+* RDMA/erdma: Do not print QP info if QP type is not RC
+* RDMA/erdma: Fix some compat issues
+* RDMA/erdma: Sync code from egs version
+* RDMA/erdma: Sync code from upstream
+* RDMA/erdma: Use ratelimited print function to print error message
+* RDMA/erdma: Remove erdma_debug.h file
+* RDMA/erdma: Update cmake version to 2.8.12 and sync code from upstream
+* RDMA/erdma: Sync code to upstream kernel.
+* RDMA/erdma: Use xxx_to_xxx APIs instead of __xxx_to_xxx APIs
+* RDMA/erdma: Fix compile error if MLNX OFED not exists
+* RDMA/erdma: reset device before init if necessary
+* RDMA/erdma: Use Big Endian port num in compat mode
 
 ## r0.2.35
 * Support query kernel qp information

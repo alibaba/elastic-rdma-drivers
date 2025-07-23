@@ -11,7 +11,7 @@ static void *get_next_valid_cqe(struct erdma_cq *cq)
 	__be32 *cqe = get_queue_entry(cq->kern_cq.qbuf, cq->kern_cq.ci,
 				      cq->depth, CQE_SHIFT);
 	u32 owner = FIELD_GET(ERDMA_CQE_HDR_OWNER_MASK,
-			      __be32_to_cpu(READ_ONCE(*cqe)));
+			      be32_to_cpu(READ_ONCE(*cqe)));
 
 	return owner ^ !!(cq->kern_cq.ci & cq->depth) ? cqe : NULL;
 }
@@ -36,6 +36,11 @@ int erdma_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 	u16 dim_timeout = cq->dim.timeout;
 	unsigned long irq_flags;
 	int ret = 0;
+
+#ifdef HAVE_ERDMA_MAD
+	if (unlikely(cq->is_soft))
+		return erdma_mad_req_notify_cq(ibcq, flags);
+#endif
 
 	spin_lock_irqsave(&cq->kern_cq.lock, irq_flags);
 
@@ -159,6 +164,11 @@ static int erdma_poll_one_cqe(struct erdma_cq *cq, struct ib_wc *wc)
 	} else {
 		id_table = kern_qp->rwr_tbl;
 		depth = qp->attrs.rq_size;
+		/* Prevent rqe out of range from HW */
+		if (kern_qp->rq_pi == wqe_idx ||
+		    (u16)(kern_qp->rq_pi - wqe_idx) > (u16)depth)
+			syndrome = ERDMA_WC_GENERAL_ERR;
+		kern_qp->rq_ci++;
 	}
 	wc->wr_id = id_table[wqe_idx & (depth - 1)];
 	wc->byte_len = be32_to_cpu(cqe->size);
@@ -189,6 +199,11 @@ int erdma_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 	struct erdma_cq *cq = to_ecq(ibcq);
 	unsigned long flags;
 	int npolled, ret;
+
+#ifdef HAVE_ERDMA_MAD
+	if (unlikely(cq->is_soft))
+		return erdma_mad_poll_cq(ibcq, num_entries, wc);
+#endif
 
 	spin_lock_irqsave(&cq->kern_cq.lock, flags);
 

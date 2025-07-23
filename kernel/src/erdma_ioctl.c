@@ -23,37 +23,6 @@ static dev_t erdma_char_dev;
 
 #define ERDMA_CHRDEV_NAME "erdma"
 
-static int erdma_query_resource(struct erdma_dev *dev, u32 mod, u32 op,
-				u32 index, void *out, u32 len)
-{
-	struct erdma_cmdq_query_req req;
-	dma_addr_t dma_addr;
-	void *resp;
-	int err;
-
-	erdma_cmdq_build_reqhdr(&req.hdr, mod, op);
-
-	resp = dma_pool_alloc(dev->resp_pool, GFP_KERNEL, &dma_addr);
-	if (!resp)
-		return -ENOMEM;
-
-	req.index = index;
-	req.target_addr = dma_addr;
-	req.target_length = ERDMA_HW_RESP_SIZE;
-
-	err = erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
-	if (err)
-		goto out;
-
-	if (out)
-		memcpy(out, resp, len);
-
-out:
-	dma_pool_free(dev->resp_pool, resp, dma_addr);
-
-	return err;
-}
-
 static int erdma_query_qpc(struct erdma_dev *dev, u32 qpn, void *out)
 {
 	BUILD_BUG_ON(sizeof(struct erdma_cmdq_query_qpc_resp) >
@@ -94,21 +63,27 @@ static int erdma_ioctl_conf_cmd(struct erdma_dev *edev,
 			edev->attrs.cc = msg->in.config_req.value;
 		else
 			msg->out.config_resp.value = edev->attrs.cc;
-	} else if (msg->in.opcode == ERDMA_CONFIG_TYPE_LOGLEVEL) {
-		if (msg->in.config_req.is_set)
-			dprint_mask = msg->in.config_req.value;
-		else
-			msg->out.config_resp.value = dprint_mask;
 	} else if (msg->in.opcode == ERDMA_CONFIG_TYPE_RETRANS_NUM) {
 		if (msg->in.config_req.is_set)
 			ret = erdma_set_retrans_num(edev, msg->in.config_req.value);
 		else
 			msg->out.config_resp.value = edev->attrs.retrans_num;
+	} else if (msg->in.opcode == ERDMA_CONFIG_TYPE_DACK_COUNT) {
+		if (msg->in.config_req.is_set)
+			ret = erdma_set_dack_count(edev, msg->in.config_req.value);
+		else
+			ret = -EINVAL;
+	} else if (msg->in.opcode == ERDMA_CONFIG_TYPE_LEGACY_MODE) {
+		if (msg->in.config_req.is_set)
+			ret = erdma_enable_legacy_mode(edev, msg->in.config_req.value);
+		else
+			ret = -EINVAL;
 	}
 
 	msg->out.length = 4;
 	return ret;
 }
+
 
 static void fill_eq_info(struct erdma_dev *dev, struct erdma_eq_info *info,
 			 struct erdma_eq *eq)
@@ -210,11 +185,11 @@ static int fill_cq_info(struct erdma_dev *dev, u32 cqn,
 		info->mtt.page_offset = cq->user_cq.qbuf_mtt.page_offset;
 		info->mtt.page_cnt = cq->user_cq.qbuf_mtt.page_cnt;
 		info->mtt.mtt_nents = cq->user_cq.qbuf_mtt.mtt_nents;
-		memcpy(info->mtt.mtt_entry, cq->user_cq.qbuf_mtt.mtt_entry,
-		       ERDMA_MAX_INLINE_MTT_ENTRIES * sizeof(__u64));
+		//memcpy(info->mtt.mtt_entry, cq->user_cq.qbuf_mtt.mtt_entry,
+		//       ERDMA_MAX_INLINE_MTT_ENTRIES * sizeof(__u64));
 		info->mtt.va = cq->user_cq.qbuf_mtt.va;
 		info->mtt.len = cq->user_cq.qbuf_mtt.len;
-		info->mtt_type = cq->user_cq.qbuf_mtt.mtt_type;
+//		info->mtt_type = cq->user_cq.qbuf_mtt.mtt_type;
 	} else {
 		info->qbuf_dma_addr = cq->kern_cq.qbuf_dma_addr;
 		info->ci = cq->kern_cq.ci;
@@ -251,6 +226,23 @@ query_hw_cqc:
 	return 0;
 }
 
+static int fill_ext_attr_info(struct erdma_dev *dev,
+			struct erdma_ioctl_msg *msg)
+{
+	struct erdma_ext_attr_info *info = &msg->out.ext_attr_info;
+	struct erdma_cmdq_query_ext_attr_resp resp;
+	int ret = 0;
+
+	ret = erdma_query_ext_attr(dev, &resp);
+
+	info->cap = dev->attrs.cap_flags;
+	info->ext_cap = resp.cap_mask;
+	info->attr_mask = resp.attr_mask;
+	info->dack_count = resp.dack_count;
+
+	return ret;
+}
+
 static int erdma_ioctl_ver_cmd(struct erdma_dev *edev,
 			       struct erdma_ioctl_msg *msg)
 {
@@ -269,7 +261,7 @@ static int erdma_fill_qp_info(struct erdma_dev *dev, u32 qpn,
 #endif
 	struct erdma_mem *mtt;
 	struct erdma_qp *qp;
-	int i, ret;
+	int ret;
 
 	if (qpn == 0)
 		goto query_hw_qpc;
@@ -277,6 +269,11 @@ static int erdma_fill_qp_info(struct erdma_dev *dev, u32 qpn,
 	qp = find_qp_by_qpn(dev, qpn);
 	if (!qp)
 		return -EINVAL;
+
+	if (qp->ibqp.qp_type != IB_QPT_RC) {
+		return -EINVAL;
+	}
+
 	erdma_qp_get(qp);
 
 	qp_info->hw_info_valid = 0;
@@ -326,26 +323,26 @@ static int erdma_fill_qp_info(struct erdma_dev *dev, u32 qpn,
 	if (qp->user) {
 #endif
 		mtt = &qp->user_qp.sq_mtt;
-		qp_info->sq_mtt_type = mtt->mtt_type;
+//		qp_info->sq_mtt_type = mtt->mtt_type;
 		qp_info->sq_mtt.page_size = mtt->page_size;
 		qp_info->sq_mtt.page_offset = mtt->page_offset;
 		qp_info->sq_mtt.page_cnt = mtt->page_cnt;
 		qp_info->sq_mtt.mtt_nents = mtt->mtt_nents;
 		qp_info->sq_mtt.va = mtt->va;
 		qp_info->sq_mtt.len = mtt->len;
-		for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
-			qp_info->sq_mtt.mtt_entry[i] = mtt->mtt_entry[i];
+//		for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
+//			qp_info->sq_mtt.mtt_entry[i] = mtt->mtt_entry[i];
 
 		mtt = &qp->user_qp.rq_mtt;
-		qp_info->rq_mtt_type = mtt->mtt_type;
+//		qp_info->rq_mtt_type = mtt->mtt_type;
 		qp_info->rq_mtt.page_size = mtt->page_size;
 		qp_info->rq_mtt.page_offset = mtt->page_offset;
 		qp_info->rq_mtt.page_cnt = mtt->page_cnt;
 		qp_info->rq_mtt.mtt_nents = mtt->mtt_nents;
 		qp_info->rq_mtt.va = mtt->va;
 		qp_info->rq_mtt.len = mtt->len;
-		for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
-			qp_info->rq_mtt.mtt_entry[i] = mtt->mtt_entry[i];
+//		for (i = 0; i < ERDMA_MAX_INLINE_MTT_ENTRIES; i++)
+//			qp_info->rq_mtt.mtt_entry[i] = mtt->mtt_entry[i];
 	} else {
 		qp_info->sqci = qp->kern_qp.sq_ci;
 		qp_info->sqpi = qp->kern_qp.sq_pi;
@@ -423,7 +420,7 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 {
 	struct erdma_qp_info *qp_info;
 	int ret = 0, count = 0, i;
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 	struct erdma_qp *qp;
 	struct erdma_cq *cq;
 	unsigned long index;
@@ -439,7 +436,7 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 
 		break;
 	case ERDMA_INFO_TYPE_ALLOCED_QP:
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 		xa_for_each_start(&edev->qp_xa, index, qp,
 				   msg->in.info_req.qn) {
 #else
@@ -454,7 +451,7 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 		msg->out.length = count * 4;
 		break;
 	case ERDMA_INFO_TYPE_ALLOCED_CQ:
-#ifdef HAVE_XARRAY
+#ifdef HAVE_XARRAY_API
 		xa_for_each_start(&edev->cq_xa, index, cq,
 				   msg->in.info_req.qn) {
 #else
@@ -490,6 +487,9 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 		break;
 	case ERDMA_INFO_TYPE_CQ:
 		ret = fill_cq_info(edev, msg->in.info_req.qn, msg);
+		break;
+	case ERDMA_INFO_TYPE_EXT_ATTR:
+		ret = fill_ext_attr_info(edev, msg);
 		break;
 	default:
 		pr_info("unknown opcode:%u\n", msg->in.opcode);
@@ -536,7 +536,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 	struct erdma_cq *cq;
 	struct erdma_eq *eq;
 	int ret = 0;
-#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+#if defined(HAVE_RDMA_RESTRACK_ENTRY_USER) && !defined(DISABLE_VM_ACCESS)
 	u64 address;
 #endif
 	u32 wqe_idx;
@@ -556,7 +556,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 				return -EINVAL;
 			erdma_qp_get(qp);
 
-#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+#if defined(HAVE_RDMA_RESTRACK_ENTRY_USER) && !defined(DISABLE_VM_ACCESS)
 			if (!rdma_is_kernel_res(&qp->ibqp.res)) {
 				address = qp->user_qp.sq_mtt.umem->address;
 				wqe_idx = qe_idx & (qp->attrs.sq_size - 1);
@@ -591,7 +591,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 			return -EINVAL;
 		erdma_qp_get(qp);
 
-#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+#if defined(HAVE_RDMA_RESTRACK_ENTRY_USER) && !defined(DISABLE_VM_ACCESS)
 		if (!rdma_is_kernel_res(&qp->ibqp.res)) {
 			address = qp->user_qp.rq_mtt.umem->address;
 			wqe_idx = qe_idx & (qp->attrs.rq_size - 1);
@@ -630,7 +630,7 @@ int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 			if (!cq)
 				return -EINVAL;
 
-#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
+#if defined(HAVE_RDMA_RESTRACK_ENTRY_USER) && !defined(DISABLE_VM_ACCESS)
 			if (!rdma_is_kernel_res(&cq->ibcq.res)) {
 				address = cq->user_cq.qbuf_mtt.umem->address;
 				wqe_idx = qe_idx & (cq->depth - 1);

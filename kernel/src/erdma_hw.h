@@ -10,9 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 
-#define ERDMA_HW_PAGE_SHIFT 12
-#define ERDMA_HW_PAGE_SIZE 4096
-
 /* PCIe device related definition. */
 #define PCI_VENDOR_ID_ALIBABA 0x1ded
 
@@ -49,17 +46,6 @@
 #define ERDMA_CMDQ_CQ_DB_HOST_ADDR_REG 0x68
 #define ERDMA_CMDQ_EQ_DB_HOST_ADDR_REG 0x70
 #define ERDMA_AEQ_DB_HOST_ADDR_REG 0x78
-#define ERDMA_REGS_STATS_TSO_IN_PKTS_REG 0x80
-#define ERDMA_REGS_STATS_TSO_OUT_PKTS_REG 0x88
-#define ERDMA_REGS_STATS_TSO_OUT_BYTES_REG 0x90
-#define ERDMA_REGS_STATS_TX_DROP_PKTS_REG 0x98
-#define ERDMA_REGS_STATS_TX_BPS_METER_DROP_PKTS_REG 0xa0
-#define ERDMA_REGS_STATS_TX_PPS_METER_DROP_PKTS_REG 0xa8
-#define ERDMA_REGS_STATS_RX_PKTS_REG 0xc0
-#define ERDMA_REGS_STATS_RX_BYTES_REG 0xc8
-#define ERDMA_REGS_STATS_RX_DROP_PKTS_REG 0xd0
-#define ERDMA_REGS_STATS_RX_BPS_METER_DROP_PKTS_REG 0xd8
-#define ERDMA_REGS_STATS_RX_PPS_METER_DROP_PKTS_REG 0xe0
 #define ERDMA_REGS_CEQ_DB_BASE_REG 0x100
 #define ERDMA_CMDQ_SQDB_REG 0x200
 #define ERDMA_CMDQ_CQDB_REG 0x300
@@ -78,11 +64,11 @@
 #define ERDMA_BAR_SQDB_SPACE_OFFSET ERDMA_BAR_DB_SPACE_BASE
 #define ERDMA_BAR_SQDB_SPACE_SIZE (384 * 1024)
 
-#define ERDMA_BAR_RQDB_SPACE_OFFSET                                            \
+#define ERDMA_BAR_RQDB_SPACE_OFFSET \
 	(ERDMA_BAR_SQDB_SPACE_OFFSET + ERDMA_BAR_SQDB_SPACE_SIZE)
 #define ERDMA_BAR_RQDB_SPACE_SIZE (96 * 1024)
 
-#define ERDMA_BAR_CQDB_SPACE_OFFSET                                            \
+#define ERDMA_BAR_CQDB_SPACE_OFFSET \
 	(ERDMA_BAR_RQDB_SPACE_OFFSET + ERDMA_BAR_RQDB_SPACE_SIZE)
 
 /* Doorbell page resources related. */
@@ -114,6 +100,10 @@
 #define ERDMA_EQDB_CI_MASK GENMASK_ULL(23, 0)
 
 #define ERDMA_PAGE_SIZE_SUPPORT 0x7FFFF000
+
+/* Hardware page size definition */
+#define ERDMA_HW_PAGE_SHIFT 12
+#define ERDMA_HW_PAGE_SIZE 4096
 
 /* WQE related. */
 #define EQE_SIZE 16
@@ -163,6 +153,9 @@ enum CMDQ_COMMON_OPCODE {
 	CMDQ_OPCODE_GET_STATS = 4,
 	CMDQ_OPCODE_QUERY_EQC = 6,
 	CMDQ_OPCODE_SET_RETRANS_NUM = 7,
+
+	CMDQ_OPCODE_SET_EXT_ATTR = 10,
+	CMDQ_OPCODE_GET_EXT_ATTR = 11,
 };
 
 /* cmdq-SQE HDR */
@@ -210,6 +203,19 @@ struct erdma_cmdq_set_retrans_num_req {
 	u32 retrans_num;
 };
 
+#define ERDMA_EXT_ATTR_DACK_COUNT_MASK BIT(0)
+#define ERDMA_EXT_ATTR_LEGACY_MODE_MASK BIT(2)
+struct erdma_ext_attr {
+	u32 attr_mask;
+	u8 dack_count;
+	u8 enable;
+};
+
+struct erdma_cmdq_set_ext_attr_req {
+	u64 hdr;
+	struct erdma_ext_attr attr;
+};
+
 /* create_cq cfg0 */
 #define ERDMA_CMD_CREATE_CQ_DEPTH_MASK GENMASK(31, 24)
 #define ERDMA_CMD_CREATE_CQ_PAGESIZE_MASK GENMASK(23, 20)
@@ -232,6 +238,7 @@ struct erdma_cmdq_create_cq_req {
 
 /* regmr/deregmr cfg0 */
 #define ERDMA_CMD_MR_VALID_MASK BIT(31)
+#define ERDMA_CMD_MR_VERSION_MASK GENMASK(30, 28)
 #define ERDMA_CMD_MR_KEY_MASK GENMASK(27, 20)
 #define ERDMA_CMD_MR_MPT_IDX_MASK GENMASK(19, 0)
 
@@ -239,10 +246,10 @@ struct erdma_cmdq_create_cq_req {
 #define ERDMA_CMD_REGMR_PD_MASK GENMASK(31, 12)
 #define ERDMA_CMD_REGMR_TYPE_MASK GENMASK(7, 6)
 #define ERDMA_CMD_REGMR_RIGHT_MASK GENMASK(5, 1)
-#define ERDMA_CMD_REGMR_ACC_MODE_MASK BIT(0)
 
 /* regmr cfg2 */
 #define ERDMA_CMD_REGMR_PAGESIZE_MASK GENMASK(31, 27)
+#define ERDMA_CMD_REGMR_PBL_PAGESIZE_MASK GENMASK(26, 24)
 #define ERDMA_CMD_REGMR_MTT_TYPE_MASK GENMASK(21, 20)
 #define ERDMA_CMD_REGMR_MTT_CNT_MASK GENMASK(19, 0)
 
@@ -253,7 +260,14 @@ struct erdma_cmdq_reg_mr_req {
 	u64 start_va;
 	u32 size;
 	u32 cfg2;
-	u64 phy_addr[4];
+	union {
+		u64 phy_addr[4];
+		struct {
+			u64 rsvd;
+			u32 size_h;
+			u32 mtt_cnt_h;
+		};
+	};
 };
 
 struct erdma_cmdq_dereg_mr_req {
@@ -266,6 +280,10 @@ struct erdma_cmdq_dereg_mr_req {
 #define ERDMA_CMD_MODIFY_QP_CC_MASK GENMASK(23, 20)
 #define ERDMA_CMD_MODIFY_QP_QPN_MASK GENMASK(19, 0)
 
+#define ERDMA_CMD_MODIFY_QP_IPV6_MASK BIT(31)
+#define ERDMA_CMD_MODIFY_QP_WWI_PERF_MASK BIT(30)
+#define ERDMA_CMD_MODIFY_QP_RQPN_MASK GENMASK(19, 0)
+
 struct erdma_cmdq_modify_qp_req {
 	u64 hdr;
 	u32 cfg;
@@ -276,6 +294,11 @@ struct erdma_cmdq_modify_qp_req {
 	__be16 dport;
 	u32 send_nxt;
 	u32 recv_nxt;
+	u32 rsvd0;
+	u32 rsvd1;
+	__be32 flow_label;
+	u8 ipv6_daddr[16];
+	u8 ipv6_saddr[16];
 };
 
 /* create qp cfg0 */
@@ -343,6 +366,8 @@ struct erdma_cmdq_reflush_req {
 enum {
 	ERDMA_DEV_CAP_FLAGS_ATOMIC = 1 << 7,
 	ERDMA_DEV_CAP_FLAGS_QUERY_QC = 1 << 6,
+	ERDMA_DEV_CAP_FLAGS_MTT_VA = 1 << 5,
+	ERDMA_DEV_CAP_FLAGS_IPV6 = 1 << 4,
 };
 
 #define ERDMA_CMD_INFO0_FW_VER_MASK GENMASK_ULL(31, 0)
@@ -370,9 +395,9 @@ struct erdma_cqe {
 };
 
 struct erdma_sge {
-	__aligned_le64 laddr;
+	__aligned_le64 addr;
 	__le32 length;
-	__le32 lkey;
+	__le32 key;
 };
 
 /* Receive Queue Element */
@@ -400,10 +425,11 @@ struct erdma_rqe {
 #define ERDMA_SQE_HDR_WQEBB_INDEX_MASK GENMASK_ULL(15, 0)
 
 /* REG MR attrs */
-#define ERDMA_SQE_MR_MODE_MASK BIT(0)
+#define ERDMA_SQE_MR_PGSZ_AVAIL_MASK BIT_ULL(0)
 #define ERDMA_SQE_MR_ACCESS_MASK GENMASK(5, 1)
 #define ERDMA_SQE_MR_MTT_TYPE_MASK GENMASK(7, 6)
 #define ERDMA_SQE_MR_MTT_CNT_MASK GENMASK(31, 12)
+#define ERDMA_SQE_MR_PGSZ_MASK GENMASK(4, 0)
 
 struct erdma_write_sqe {
 	__le64 hdr;
@@ -416,7 +442,7 @@ struct erdma_write_sqe {
 
 	__le32 rsvd;
 
-	struct erdma_sge sgl[0];
+	struct erdma_sge sgl[];
 };
 
 struct erdma_send_sqe {
@@ -427,7 +453,7 @@ struct erdma_send_sqe {
 	};
 
 	__le32 length;
-	struct erdma_sge sgl[0];
+	struct erdma_sge sgl[];
 };
 
 struct erdma_readreq_sqe {
@@ -440,13 +466,23 @@ struct erdma_readreq_sqe {
 	__le32 rsvd;
 };
 
+struct erdma_atomic_sqe {
+	__le64 hdr;
+	__le64 rsvd;
+	__le64 fetchadd_swap_data;
+	__le64 cmp_data;
+
+	struct erdma_sge remote;
+	struct erdma_sge sgl;
+};
+
 struct erdma_reg_mr_sqe {
 	__le64 hdr;
 	__le64 addr;
 	__le32 length;
 	__le32 stag;
-	__le32 attrs;
-	__le32 rsvd;
+	__le32 attr0;
+	__le32 attr1;
 };
 
 /* EQ related. */
@@ -499,7 +535,9 @@ enum erdma_opcode {
 	ERDMA_OP_REG_MR = 14,
 	ERDMA_OP_LOCAL_INV = 15,
 	ERDMA_OP_READ_WITH_INV = 16,
-	ERDMA_NUM_OPCODES = 17,
+	ERDMA_OP_ATOMIC_CAS = 17,
+	ERDMA_OP_ATOMIC_FAA = 18,
+	ERDMA_NUM_OPCODES = 19,
 	ERDMA_OP_INVALID = ERDMA_NUM_OPCODES + 1
 };
 
@@ -667,6 +705,15 @@ struct erdma_cmdq_query_eqc_resp {
 	u64 cn_addr;
 	u64 cn_db_addr;
 	u64 eq_db_record;
+};
+
+struct erdma_cmdq_query_ext_attr_resp {
+	struct erdma_cmdq_query_resp_hdr hdr;
+
+	u32 cap_mask;
+	u32 attr_mask;
+
+	u8 dack_count;
 };
 
 struct erdma_cmdq_dump_addr_req {
