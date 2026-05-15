@@ -1,3 +1,10 @@
+erdma (1.1.0-7) unstable; urgency=medium
+
+  * Fix compile issue in ubuntu24.04
+  * Support for mlnx_ofed 24.10
+
+ -- Haiwei Lin <linhaiwei@linux.alibaba.com>  Thu, 13 Mar 2025 17:51:32 +0800
+
 erdma (1.1.0-6) unstable; urgency=medium
 
   * Fix wrong judgement of rq_db_mmap_entry insert

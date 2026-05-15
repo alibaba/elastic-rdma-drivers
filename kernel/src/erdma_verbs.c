@@ -2472,11 +2472,19 @@ err_out:
 	return ret;
 }
 
+#ifdef HAVE_CREATE_CQ_UVERBS_ATTR_BUNDLE
+int erdma_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
+		    struct uverbs_attr_bundle *attrs)
+#else
 int erdma_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		    struct ib_udata *udata)
+#endif
 {
 	struct erdma_dev *dev = to_edev(ibcq->device);
 	struct erdma_cq *cq = to_ecq(ibcq);
+#ifdef HAVE_CREATE_CQ_UVERBS_ATTR_BUNDLE
+	struct ib_udata *udata = &attrs->driver_udata;
+#endif
 	unsigned int depth = attr->cqe;
 	int ret;
 #ifdef HAVE_UDATA_TO_DRV_CONTEXT

@@ -2,7 +2,8 @@
 # Copyright 2020 Amazon.com, Inc. or its affiliates. All rights reserved.
 
 DRIVER_NAME = conftest
-KBUILD_CPPFLAGS += -Werror -Wno-unused-variable -Wno-uninitialized -Wno-maybe-uninitialized
+KBUILD_CPPFLAGS += -Werror -Wno-unused-variable -Wno-uninitialized -Wno-maybe-uninitialized -Wno-missing-declarations -Wno-missing-prototypes
+KBUILD_CFLAGS += -Werror -Wno-unused-variable -Wno-uninitialized -Wno-maybe-uninitialized -Wno-missing-declarations -Wno-missing-prototypes
 
 KERNEL_DIR ?= /lib/modules/$(shell uname -r)/build
 

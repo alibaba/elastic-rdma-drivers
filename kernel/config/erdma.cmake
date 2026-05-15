@@ -286,6 +286,10 @@ try_compile_dev_or_ops(create_ah erdma_create_ah
   "static int erdma_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr, struct ib_udata *udata) { return 0; }"
   HAVE_CREATE_AH_RDMA_INIT_ATTR "")
 
+try_compile_dev_or_ops(create_cq erdma_create_cq
+  "static int erdma_create_cq(struct ib_cq *cq, const struct ib_cq_init_attr *attr, struct uverbs_attr_bundle *attrs) { return 0; }"
+  HAVE_CREATE_CQ_UVERBS_ATTR_BUNDLE "")
+
 try_compile("#include <rdma/ib_umem.h>" "ib_umem_find_best_pgsz(NULL, 0, 0);"
   HAVE_IB_UMEM_FIND_SINGLE_PG_SIZE "")
 

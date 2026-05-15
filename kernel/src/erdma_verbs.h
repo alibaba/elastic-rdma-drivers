@@ -396,8 +396,13 @@ int erdma_query_device(struct ib_device *dev, struct ib_device_attr *attr,
 		       struct ib_udata *data);
 int erdma_get_port_immutable(struct ib_device *dev, port_t port,
 			     struct ib_port_immutable *ib_port_immutable);
+#ifdef HAVE_CREATE_CQ_UVERBS_ATTR_BUNDLE
+int erdma_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
+		    struct uverbs_attr_bundle *attrs);
+#else
 int erdma_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		    struct ib_udata *data);
+#endif
 #ifndef HAVE_CQ_CORE_ALLOCATION
 struct ib_cq *erdma_kzalloc_cq(struct ib_device *ibdev,
 			       const struct ib_cq_init_attr *attr,

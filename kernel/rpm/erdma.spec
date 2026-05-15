@@ -5,7 +5,7 @@
 
 Name:		%{name}
 Version:	%{driver_version}
-Release:	6%{?dist}
+Release:	7%{?dist}
 Summary:	%{name} kernel module
 
 Group:		System/Kernel
