@@ -10,7 +10,7 @@ cd $INSTALL_PATH
 dkms add -m ${NAME} -v ${DRIVER_VERSION}
 
 # Only build for current OS IF MLNXOFED presents.
-if [ -e /usr/src/ofa_kernel/`uname -r` ]; then
+if [ -e /usr/src/ofa_kernel/`uname -r` ] || [ -e /usr/src/ofa_kernel/default ]; then
     dkms build -m ${NAME} -v ${DRIVER_VERSION} -k `uname -r`
     dkms install --force -m ${NAME} -v ${DRIVER_VERSION} -k `uname -r`
 else

@@ -1,3 +1,16 @@
+erdma (1.1.0-6) unstable; urgency=medium
+
+  * Fix wrong judgement of rq_db_mmap_entry insert
+  * Support disassociate ucontext in compat mode
+
+ -- Cheng Xu <chengyou@linux.alibaba.com>  Fri,  3 Jan 2025 14:28:32 +0800
+
+erdma (1.1.0-5) unstable; urgency=medium
+
+  * Fix ubuntu20.04 + MLNX OFED Installation fail.
+
+ -- Cheng Xu <chengyou@linux.alibaba.com>  Thu, 12 Dec 2024 17:28:14 +0800
+
 erdma (1.1.0-4) unstable; urgency=medium
 
   * Add RDMA_CM support for compat mode.

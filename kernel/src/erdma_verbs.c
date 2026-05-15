@@ -2195,7 +2195,7 @@ int erdma_alloc_ucontext(struct ib_ucontext *ibctx, struct ib_udata *udata)
 
 	ctx->rq_db_mmap_entry = erdma_user_mmap_entry_insert(
 		ibctx, (u64)ctx->rdb, PAGE_SIZE, ERDMA_MMAP_IO_NC, &uresp.rdb);
-	if (!ctx->sq_db_mmap_entry) {
+	if (!ctx->rq_db_mmap_entry) {
 		ret = -EINVAL;
 		goto err_out;
 	}
