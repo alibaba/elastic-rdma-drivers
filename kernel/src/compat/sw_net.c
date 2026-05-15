@@ -157,8 +157,8 @@ drop:
 	return 0;
 }
 
-struct socket *sw_setup_udp_tunnel(struct net *net, __be16 port,
-					   bool ipv6)
+static struct socket *sw_setup_udp_tunnel(struct net *net, __be16 port,
+					  bool ipv6)
 {
 	int err;
 	struct socket *sock;
@@ -392,16 +392,15 @@ struct sk_buff *sw_init_packet(struct sw_dev *sw, struct sw_av *av,
 	unsigned int hdr_len;
 	struct sk_buff *skb = NULL;
 	struct net_device *ndev;
+#ifdef HAVE_RDMA_GID_API
 	const struct ib_gid_attr *attr;
+#endif
 	const int port_num = 1;
 
 #ifdef HAVE_RDMA_GID_API
 	attr = rdma_get_gid_attr(&sw->master->ibdev, port_num, av->grh.sgid_index);
 	if (IS_ERR(attr))
 		return NULL;
-#else
-	pr_err_once("Unexcepted branch, does not support this OS.\n");
-	return NULL;
 #endif
 
 	if (av->network_type == SW_NETWORK_TYPE_IPV4)
@@ -412,11 +411,17 @@ struct sk_buff *sw_init_packet(struct sw_dev *sw, struct sw_av *av,
 			sizeof(struct ipv6hdr);
 
 	rcu_read_lock();
+
+#ifdef HAVE_RDMA_GID_API
 #ifdef HAVE_RDMA_READ_GID_ATTR_NDEV_RCU
 	ndev = rdma_read_gid_attr_ndev_rcu(attr);
 #else
 	ndev = attr->ndev;
 #endif
+#else
+	ndev = sw->ndev;
+#endif
+
 	if (IS_ERR(ndev)) {
 		rcu_read_unlock();
 		goto out;

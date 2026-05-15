@@ -7,16 +7,21 @@
 #include "sw.h"
 #include "sw_loc.h"
 
-void sw_init_av(struct rdma_ah_attr *attr, struct sw_av *av)
+void sw_init_av(struct ib_device *ibdev, struct rdma_ah_attr *attr, struct sw_av *av)
 {
 	sw_av_from_attr(rdma_ah_get_port_num(attr), av, attr);
-	sw_av_fill_ip_info(av, attr);
+	sw_av_fill_ip_info(ibdev, av, attr);
 	memcpy(av->dmac, attr->roce.dmac, ETH_ALEN);
 }
 
 int sw_av_chk_attr(struct sw_dev *sw, struct rdma_ah_attr *attr)
 {
 	const struct ib_global_route *grh = rdma_ah_read_grh(attr);
+#ifndef HAVE_IB_GLOBAL_ROUTE_WITH_SGID_ATTR
+	struct ib_gid_attr sgid_attr;
+	union ib_gid sgid;
+	int err;
+#endif
 	struct sw_port *port;
 	int type;
 
@@ -32,9 +37,10 @@ int sw_av_chk_attr(struct sw_dev *sw, struct rdma_ah_attr *attr)
 #ifdef HAVE_IB_GLOBAL_ROUTE_WITH_SGID_ATTR
 		type = rdma_gid_attr_network_type(grh->sgid_attr);
 #else
-		/* Stub for old kernel. */
-		pr_err_once("Unexcepted branch, does not support this OS.\n");
-		return -EINVAL;
+		err = ib_get_sgid_attr(&sw->master->ibdev, attr, &sgid,
+				       &sgid_attr, &type);
+		if (err)
+			return err;
 #endif
 
 		if (type < RDMA_NETWORK_IPV4 ||
@@ -78,25 +84,29 @@ void sw_av_to_attr(struct sw_av *av, struct rdma_ah_attr *attr)
 	rdma_ah_set_port_num(attr, av->port_num);
 }
 
-void sw_av_fill_ip_info(struct sw_av *av, struct rdma_ah_attr *attr)
+void sw_av_fill_ip_info(struct ib_device *ibdev, struct sw_av *av, struct rdma_ah_attr *attr)
 {
 #ifdef HAVE_IB_GLOBAL_ROUTE_WITH_SGID_ATTR
 	const struct ib_gid_attr *sgid_attr = attr->grh.sgid_attr;
+#else
+	struct ib_gid_attr sgid_attr;
+	union ib_gid sgid;
+	int err;
 #endif
 	int ibtype;
 	int type;
 
 #ifdef HAVE_IB_GLOBAL_ROUTE_WITH_SGID_ATTR
+	ibtype = rdma_gid_attr_network_type(sgid_attr);
 	rdma_gid2ip((struct sockaddr *)&av->sgid_addr, &sgid_attr->gid);
+#else
+	err = ib_get_sgid_attr(ibdev, attr, &sgid, &sgid_attr, &ibtype);
+	if (err)
+		return;
+	rdma_gid2ip((struct sockaddr *)&av->sgid_addr, &sgid);
+#endif
 	rdma_gid2ip((struct sockaddr *)&av->dgid_addr,
 		    &rdma_ah_read_grh(attr)->dgid);
-
-	ibtype = rdma_gid_attr_network_type(sgid_attr);
-#else
-	/* Stub for old kernel. */
-	pr_err_once("Unexcepted branch, does not support this OS.\n");
-	ibtype = RDMA_NETWORK_IB;
-#endif
 
 	switch (ibtype) {
 	case RDMA_NETWORK_IPV4:

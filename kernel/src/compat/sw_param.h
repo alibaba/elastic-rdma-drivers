@@ -70,7 +70,7 @@ enum sw_device_param {
 	SW_MAX_MCAST_GRP		= 8192,
 	SW_MAX_MCAST_QP_ATTACH		= 56,
 	SW_MAX_TOT_MCAST_QP_ATTACH	= 0x70000,
-	SW_MAX_AH			= 100,
+	SW_MAX_AH			= 10000,
 	SW_MAX_SRQ			= 960,
 	SW_MAX_SRQ_WR			= 0x4000,
 	SW_MIN_SRQ_WR			= 1,

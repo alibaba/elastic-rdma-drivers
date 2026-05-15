@@ -19,10 +19,7 @@
 #include "erdma_hw.h"
 #include "erdma_ioctl.h"
 #include "erdma_stats.h"
-
-#ifdef HAVE_ERDMA_MAD
 #include "compat/sw_verbs.h"
-#endif
 
 #define DRV_MODULE_NAME "erdma"
 #define ERDMA_NODE_DESC "Elastic RDMA(iWARP) stack"
@@ -216,9 +213,7 @@ struct erdma_dev {
 	rwlock_t netdev_lock;
 	struct pci_dev *pdev;
 	struct notifier_block netdev_nb;
-#ifdef HAVE_ERDMA_MAD
 	struct sw_dev sw_dev;
-#endif
 	struct workqueue_struct *reflush_wq;
 
 	resource_size_t func_bar_addr;

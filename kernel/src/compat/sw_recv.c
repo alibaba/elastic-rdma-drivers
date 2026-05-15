@@ -324,6 +324,8 @@ static int sw_chk_dgid(struct sw_dev *sw, struct sk_buff *skb)
 	struct sw_pkt_info *pkt = SKB_TO_PKT(skb);
 #ifdef HAVE_RDMA_FIND_GID_BY_PORT
 	const struct ib_gid_attr *gid_attr;
+#else
+	u16 index;
 #endif
 	union ib_gid dgid;
 	union ib_gid *pdgid;
@@ -349,9 +351,9 @@ static int sw_chk_dgid(struct sw_dev *sw, struct sk_buff *skb)
 	if (IS_ERR(gid_attr))
 		return PTR_ERR(gid_attr);
 #else
-	/* Stub for old kernel. */
-	pr_err_once("Unexcepted branch, does not support this OS.\n");
-	return -EINVAL;
+	return ib_find_cached_gid_by_port(&sw->master->ibdev, pdgid,
+					  IB_GID_TYPE_ROCE_UDP_ENCAP,
+					  1, skb->dev, &index);
 #endif
 
 #ifdef HAVE_RDMA_GID_API

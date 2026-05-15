@@ -18,7 +18,7 @@ struct erdma_net {
 
 static unsigned int erdma_net_id;
 
-#ifdef HAVE_ERDMA_MAD
+#ifdef ENABLE_COMPAT_MODE
 bool compat_mode = true;
 #else
 bool compat_mode;
@@ -44,7 +44,6 @@ module_param(use_zeronet, bool, 0444);
 MODULE_PARM_DESC(use_zeronet, "can use zeronet");
 #endif
 
-#ifdef HAVE_ERDMA_MAD
 #include "compat/sw.h"
 #include "compat/sw_loc.h"
 #include "compat/sw_queue.h"
@@ -196,8 +195,6 @@ void detach_sw_dev(struct erdma_dev *dev)
 	sw_dealloc(&dev->sw_dev);
 }
 
-#endif
-
 int erdma_create_ah(struct ib_ah *ibah,
 #ifdef HAVE_CREATE_AH_RDMA_INIT_ATTR
 		    struct rdma_ah_init_attr *init_attr,
@@ -206,10 +203,12 @@ int erdma_create_ah(struct ib_ah *ibah,
 #endif
 		    struct ib_udata *udata)
 {
-#ifdef HAVE_ERDMA_MAD
+	if (!compat_mode)
+		return -EOPNOTSUPP;
+#ifdef HAVE_CREATE_AH_RDMA_INIT_ATTR
 	return sw_create_ah(ibah, init_attr->ah_attr, udata);
 #else
-	return -EOPNOTSUPP;
+	return sw_create_ah(ibah, ah_attr, udata);
 #endif
 }
 
@@ -224,7 +223,36 @@ struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct rdma_ah_attr *ah_attr,
 struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 #endif
 {
-	return ERR_PTR(-EOPNOTSUPP);
+	struct sw_pd *pd = to_rpd(ibpd);
+	struct sw_ah *ah;
+	int ret;
+
+	if (!compat_mode)
+		return ERR_PTR(-EOPNOTSUPP);
+
+	ah = kzalloc(sizeof(*ah), GFP_KERNEL);
+	if (!ah)
+		return ERR_PTR(-ENOMEM);
+
+	ah->pd = pd;
+	ah->ibah.device = ibpd->device;
+	ah->ibah.pd = ibpd;
+
+#ifdef HAVE_CREATE_AH_FLAGS
+	ret = erdma_create_ah(&ah->ibah, ah_attr, flags, udata);
+#elif defined(HAVE_CREATE_AH_RDMA_ATTR)
+	ret = erdma_create_ah(&ah->ibah, ah_attr, 0, udata);
+#else
+	ret = -EOPNOTSUPP;
+#endif
+	if (ret)
+		goto out_free;
+
+	return &ah->ibah;
+
+out_free:
+	kfree(ah);
+	return ERR_PTR(ret);
 }
 #endif
 
@@ -238,21 +266,23 @@ int erdma_destroy_ah(struct ib_ah *ibah, u32 flags)
 int erdma_destroy_ah(struct ib_ah *ibah)
 #endif
 {
-#ifdef HAVE_ERDMA_MAD
 	struct sw_ah *ah = to_rah(ibah);
 
-	sw_drop_ref(ah);
+	if (!compat_mode)
+#if defined(HAVE_AH_CORE_ALLOCATION) && defined (HAVE_DESTROY_AH_VOID) &&                  \
+	!defined(HAVE_AH_CORE_ALLOCATION_DESTROY_RC)
+		return;
+#else
+		return -EOPNOTSUPP;
 #endif
+
+	sw_drop_ref(ah);
 
 #if defined(HAVE_AH_CORE_ALLOCATION) && defined (HAVE_DESTROY_AH_VOID) &&                  \
 	!defined(HAVE_AH_CORE_ALLOCATION_DESTROY_RC)
 	return;
 #else
-#ifdef HAVE_ERDMA_MAD
 	return 0;
-#else
-	return -EOPNOTSUPP;
-#endif
 #endif
 }
 
@@ -323,7 +353,7 @@ static int erdma_av_from_attr(struct erdma_qp *qp, struct ib_qp_attr *attr)
 	struct ib_gid_attr sgid_attr;
 	int err;
 #endif
-	enum rdma_network_type ntype;
+	int ntype;
 	union ib_gid sgid;
 
 	if (ah_attr->type != RDMA_AH_ATTR_TYPE_ROCE) {
@@ -336,19 +366,13 @@ static int erdma_av_from_attr(struct erdma_qp *qp, struct ib_qp_attr *attr)
 	ntype = rdma_gid_attr_network_type(sgid_attr);
 	sgid = sgid_attr->gid;
 #else
-	err = ib_get_cached_gid(&qp->dev->ibdev, rdma_ah_get_port_num(ah_attr),
-				rdma_ah_read_grh(ah_attr)->sgid_index, &sgid,
-				&sgid_attr);
+	err = ib_get_sgid_attr(&qp->dev->ibdev, ah_attr, &sgid,
+			       &sgid_attr, &ntype);
 	if (err)
 		return err;
-
-	ntype = ib_gid_to_network_type(sgid_attr.gid_type, &sgid);
-
-	if (sgid_attr.ndev)
-		dev_put(sgid_attr.ndev);
 #endif
 
-	ibdev_dbg(&qp->dev->ibdev, "gid type:%u, sgid: %pI6\n", ntype,
+	ibdev_dbg(&qp->dev->ibdev, "gid type:%d, sgid: %pI6\n", ntype,
 		  sgid.raw);
 
 	rdma_gid2ip((struct sockaddr *)&qp->attrs.laddr, &sgid);
@@ -471,17 +495,13 @@ int erdma_compat_init(void)
 	if (!compat_mode)
 		return 0;
 
-#ifdef HAVE_ERDMA_MAD
 	ret = sw_net_init();
 	if (ret)
 		return ret;
-#endif
 
 	ret = register_pernet_subsys(&erdma_net_ops);
-#ifdef HAVE_ERDMA_MAD
 	if (ret)
 		sw_net_exit();
-#endif
 
 	return ret;
 }
@@ -493,7 +513,5 @@ void erdma_compat_exit(void)
 
 	unregister_pernet_subsys(&erdma_net_ops);
 
-#ifdef HAVE_ERDMA_MAD
 	sw_net_exit();
-#endif
 }

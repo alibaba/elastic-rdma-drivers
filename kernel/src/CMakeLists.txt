@@ -10,15 +10,14 @@ list(APPEND erdma_sources
   erdma_stats.h erdma_stats.c erdma_debugfs.c erdma_cmd.c
   )
 
-if(ENABLE_MAD)
-  list(APPEND erdma_sources 
+
+list(APPEND erdma_sources
   compat/sw.h compat/sw_hw_counters.h compat/sw_net.h compat/sw_param.h compat/sw_queue.h compat/sw_verbs.h
   compat/sw_hdr.h compat/sw_loc.h compat/sw_opcode.h compat/sw_pool.h compat/sw_task.h compat/rdma_user_sw.h
   compat/sw_av.c compat/sw_cq.c compat/sw_icrc.c compat/sw_net.c compat/sw_pool.c compat/sw_queue.c compat/sw_comp.c
   compat/sw_dev.c compat/sw_mcast.c compat/sw_mr.c compat/sw_opcode.c compat/sw_qp.c compat/sw_recv.c
   compat/sw_verbs.c compat/sw_req.c compat/sw_task.c compat/sw_resp.c
   )
-endif()
 
 string(REPLACE ";" " " erdma_sources_string "${erdma_sources}")
 configure_file(Kbuild.in Kbuild @ONLY)
@@ -41,11 +40,11 @@ if(DISABLE_VM_ACCESS)
   config_define(DISABLE_VM_ACCESS)
 endif()
 
-if(ENABLE_MAD)
-  message("-- ERDMA RoCE MAD enabled")
-  config_define(HAVE_ERDMA_MAD)
+if(ENABLE_COMPAT_MODE)
+  message("-- ERDMA compat mode enabled")
+  config_define(ENABLE_COMPAT_MODE)
 else()
-  message("-- ERDMA RoCE MAD disabled")
+  message("-- ERDMA compat mode disabled")
 endif()
 
 if(ENABLE_LEGACY_MODE)

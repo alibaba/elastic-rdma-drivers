@@ -558,10 +558,8 @@ int erdma_dealloc_pd(struct ib_pd *ibpd)
 
 	ERDMA_INC_CNT(dev, CMD_DEALLOC_PD);
 
-#ifdef HAVE_ERDMA_MAD
-	if (pd->sw_pd)
+	if (compat_mode && pd->sw_pd)
 		detach_sw_pd(pd);
-#endif
 
 	erdma_free_idx(&dev->res_cb[ERDMA_RES_TYPE_PD], pd->pdn);
 #ifndef HAVE_PD_CORE_ALLOCATION
@@ -1338,6 +1336,53 @@ static void free_user_qp(struct erdma_qp *qp, struct erdma_ucontext *uctx)
 	erdma_unmap_user_dbrecords(uctx, &qp->user_qp.user_dbr_page);
 }
 
+static inline int erdma_alloc_qpn(struct erdma_dev *dev, int *qpn, void *qp)
+{
+	int ret;
+
+#ifdef HAVE_XARRAY_API
+	ret = xa_alloc_cyclic(&dev->qp_xa, qpn, qp,
+			      XA_LIMIT(1, dev->attrs.max_qp - 1),
+			      &dev->next_alloc_qpn, GFP_KERNEL);
+#else
+	ret = idr_alloc_cyclic_safe(&dev->qp_idr, qpn, qp, &dev->idr_lock,
+				    &dev->next_alloc_qpn, dev->attrs.max_qp);
+#endif
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static inline int erdma_set_qpn(struct erdma_dev *dev, u32 qpn, void *qp)
+{
+#ifdef HAVE_XARRAY_API
+	void *entry;
+#endif
+	int ret = 0;
+
+#ifdef HAVE_XARRAY_API
+	entry = xa_store(&dev->qp_xa, qpn, qp, GFP_KERNEL);
+	if (xa_is_err(entry))
+		ret = xa_err(entry);
+#else
+	ret = idr_store_safe(&dev->qp_idr, qpn, qp, &dev->idr_lock);
+#endif
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static inline void erdma_clear_qpn(struct erdma_dev *dev, u32 qpn)
+{
+#ifdef HAVE_XARRAY_API
+	xa_erase(&dev->qp_xa, qpn);
+#else
+	idr_remove_safe(&dev->qp_idr, qpn, &dev->idr_lock);
+#endif
+}
+
 int erdma_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *attrs,
 		    struct ib_udata *udata)
 {
@@ -1348,23 +1393,20 @@ int erdma_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *attrs,
 	struct erdma_ucontext *uctx;
 	int ret;
 
-#ifdef HAVE_ERDMA_MAD
-	if (unlikely(attrs->qp_type == IB_QPT_GSI)) {
-#ifdef HAVE_XARRAY_API
-		ret = xa_alloc_cyclic(&dev->qp_xa, &qp->ibqp.qp_num, qp,
-				      XA_LIMIT(1, dev->attrs.max_qp - 1),
-				      &dev->next_alloc_qpn, GFP_KERNEL);
-#else
-		ret = idr_alloc_cyclic_safe(&dev->qp_idr, &qp->ibqp.qp_num, qp,
-					    &dev->idr_lock,
-					    &dev->next_alloc_qpn,
-					    dev->attrs.max_qp);
-#endif
+	if (compat_mode && unlikely(attrs->qp_type == IB_QPT_GSI)) {
+		QP_ID(qp) = 1;
+
+		ret = erdma_set_qpn(dev, QP_ID(qp), qp);
 		if (ret < 0)
 			return ret;
-		return erdma_create_mad_qp(ibqp, attrs, udata);
+
+		ret = erdma_create_mad_qp(ibqp, attrs, udata);
+		if (ret)
+			erdma_clear_qpn(dev, QP_ID(qp));
+
+		return ret;
 	}
-#endif
+
 #ifdef HAVE_UDATA_TO_DRV_CONTEXT
 	uctx = rdma_udata_to_drv_context(udata, struct erdma_ucontext,
 					 ibucontext);
@@ -1391,15 +1433,7 @@ int erdma_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *attrs,
 	kref_init(&qp->ref);
 	init_completion(&qp->safe_free);
 
-#ifdef HAVE_XARRAY_API
-	ret = xa_alloc_cyclic(&dev->qp_xa, &qp->ibqp.qp_num, qp,
-			      XA_LIMIT(1, dev->attrs.max_qp - 1),
-			      &dev->next_alloc_qpn, GFP_KERNEL);
-#else
-	ret = idr_alloc_cyclic_safe(&dev->qp_idr, &qp->ibqp.qp_num, qp,
-				    &dev->idr_lock, &dev->next_alloc_qpn,
-				    dev->attrs.max_qp);
-#endif
+	ret = erdma_alloc_qpn(dev, &qp->ibqp.qp_num, qp);
 	if (ret < 0) {
 		ret = -ENOMEM;
 		goto err_out;
@@ -1454,11 +1488,7 @@ err_out_cmd:
 	else
 		free_kernel_qp(qp);
 err_out_xa:
-#ifdef HAVE_XARRAY_API
-	xa_erase(&dev->qp_xa, QP_ID(qp));
-#else
-	idr_remove_safe(&dev->qp_idr, QP_ID(qp), &dev->idr_lock);
-#endif
+	erdma_clear_qpn(dev, QP_ID(qp));
 err_out:
 	ERDMA_INC_CNT(dev, CMD_CREATE_QP_FAILED);
 	return ret;
@@ -1820,10 +1850,8 @@ int erdma_destroy_cq(struct ib_cq *ibcq)
 	int err;
 	struct erdma_cmdq_destroy_cq_req req;
 
-#ifdef HAVE_ERDMA_MAD
-	if (cq->sw_cq)
+	if (compat_mode && cq->sw_cq)
 		detach_sw_cq(cq);
-#endif
 
 	ERDMA_INC_CNT(dev, CMD_DESTROY_CQ);
 
@@ -1960,12 +1988,10 @@ int erdma_destroy_qp(struct ib_qp *ibqp)
 		local_irq_restore(flags);
 	}
 
-#ifdef HAVE_ERDMA_MAD
-	if (unlikely(ibqp->qp_type == IB_QPT_GSI)) {
+	if (compat_mode && unlikely(ibqp->qp_type == IB_QPT_GSI)) {
 		erdma_destroy_mad_qp(ibqp);
 		goto free_idr;
 	}
-#endif
 
 	ERDMA_INC_CNT(dev, CMD_DESTROY_QP);
 
@@ -2008,14 +2034,8 @@ int erdma_destroy_qp(struct ib_qp *ibqp)
 	if (qp->cep)
 		erdma_cep_put(qp->cep);
 
-#ifdef HAVE_ERDMA_MAD
 free_idr:
-#endif
-#ifdef HAVE_XARRAY_API
-	xa_erase(&dev->qp_xa, QP_ID(qp));
-#else
-	idr_remove_safe(&dev->qp_idr, QP_ID(qp), &dev->idr_lock);
-#endif
+	erdma_clear_qpn(dev, QP_ID(qp));
 
 #ifndef HAVE_QP_CORE_ALLOCATION
 	kfree(qp);
@@ -2292,10 +2312,8 @@ int erdma_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
 	if (attr_mask & ~IB_QP_ATTR_STANDARD_BITS)
 		return -EOPNOTSUPP;
 #endif
-#ifdef HAVE_ERDMA_MAD
-	if (ibqp->qp_type == IB_QPT_GSI)
+	if (compat_mode && ibqp->qp_type == IB_QPT_GSI)
 		return erdma_modify_mad_qp(ibqp, attr, attr_mask, udata);
-#endif
 
 	if (attr_mask & IB_QP_OOB_CONN_ATTR) {
 		ret = update_kernel_qp_oob_attr(qp, attr, attr_mask);

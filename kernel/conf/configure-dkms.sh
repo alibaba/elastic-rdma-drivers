@@ -20,10 +20,6 @@ if [[ $ERDMA_CM_NO_BOUND_IF = "1" ]]; then
     config="$config -DENABLE_CM_NO_BOUND_IF=1"
 fi
 
-if [[ $ERDMA_FORCE_MAD_ENABLE = "1" ]]; then
-    config="$config -DENABLE_MAD=1"
-fi
-
 mkdir -p build
 pushd build
 # Add path to fix the cmake is in /usr/local/bin

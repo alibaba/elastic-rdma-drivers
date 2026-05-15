@@ -656,10 +656,8 @@ int erdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *send_wr,
 	if (!send_wr)
 		return -EINVAL;
 
-#ifdef HAVE_ERDMA_MAD
-	if (unlikely(ibqp->qp_type == IB_QPT_GSI))
+	if (compat_mode && unlikely(ibqp->qp_type == IB_QPT_GSI))
 		return erdma_post_send_mad(ibqp, send_wr, bad_send_wr);
-#endif
 
 	spin_lock_irqsave(&qp->kern_qp.sq_lock, flags);
 	sq_pi = qp->kern_qp.sq_pi;
@@ -741,10 +739,8 @@ int erdma_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *recv_wr,
 	unsigned long flags;
 	int ret = 0;
 
-#ifdef HAVE_ERDMA_MAD
-	if (unlikely(ibqp->qp_type == IB_QPT_GSI))
+	if (compat_mode && unlikely(ibqp->qp_type == IB_QPT_GSI))
 		return erdma_post_recv_mad(ibqp, recv_wr, bad_recv_wr);
-#endif
 
 	spin_lock_irqsave(&qp->kern_qp.rq_lock, flags);
 

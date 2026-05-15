@@ -156,15 +156,19 @@ rdma_user_mmap_io(NULL, NULL, 0, 0, prot);
 try_compile("" "struct ib_device_ops ops;" HAVE_IB_DEV_OPS "")
 
 try_compile_dev_or_ops(create_ah erdma_kzalloc_ah
-  "struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct rdma_ah_attr *ah_attr, u32 flags, struct ib_udata *udata) { return NULL; }"
+  "static struct ib_ah *erdma_kzalloc_ah(struct ib_pd *ibpd, struct rdma_ah_attr *ah_attr, u32 flags, struct ib_udata *udata) { return NULL; }"
   HAVE_CREATE_AH_FLAGS "")
 
+try_compile_dev_or_ops(create_user_ah erdma_create_user_ah
+  "static int erdma_create_user_ah(struct ib_ah *ah, struct rdma_ah_init_attr *attr, struct ib_udata *udata) { return 0; }"
+  HAVE_CREATE_USER_AH "")
+
 try_compile_dev_or_ops(destroy_ah erdma_destroy_ah
-  "void erdma_destroy_ah(struct ib_ah *ibah, u32 flags) {}"
+  "static void erdma_destroy_ah(struct ib_ah *ibah, u32 flags) {}"
   HAVE_DESTROY_AH_VOID "")
 
 try_compile_dev_or_ops(destroy_ah erdma_destroy_ah
-  "int erdma_destroy_ah(struct ib_ah *ibah, u32 flags) { return 0; }"
+  "static int erdma_destroy_ah(struct ib_ah *ibah, u32 flags) { return 0; }"
   HAVE_DESTROY_AH_FLAGS "")
 
 try_compile(
@@ -251,35 +255,35 @@ struct ib_device_ops ops = {
   HAVE_AH_CORE_ALLOCATION "")
 
 try_compile_dev_or_ops(alloc_pd erdma_alloc_pd
-  "int erdma_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata) { return 0; }"
+  "static int erdma_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata) { return 0; }"
   HAVE_ALLOC_PD_NO_UCONTEXT "")
 
 try_compile_dev_or_ops(create_cq erdma_kzalloc_cq
-  "struct ib_cq *erdma_kzalloc_cq(struct ib_device *ibdev, const struct ib_cq_init_attr *attr, struct ib_udata *udata) { return NULL; }"
+  "static struct ib_cq *erdma_kzalloc_cq(struct ib_device *ibdev, const struct ib_cq_init_attr *attr, struct ib_udata *udata) { return NULL; }"
   HAVE_CREATE_CQ_NO_UCONTEXT "")
 
 try_compile_dev_or_ops(dealloc_pd erdma_dealloc_pd
-  "void erdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata) {}"
+  "static void erdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata) {}"
   HAVE_DEALLOC_PD_UDATA "")
 
 try_compile_dev_or_ops(dereg_mr erdma_dereg_mr
-  "int erdma_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata) { return 0; }"
+  "static int erdma_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata) { return 0; }"
   HAVE_DEREG_MR_UDATA "")
 
 try_compile_dev_or_ops(add_gid erdma_add_gid
-  "int erdma_add_gid(const struct ib_gid_attr *attr, void **context) { return 0; }"
+  "static int erdma_add_gid(const struct ib_gid_attr *attr, void **context) { return 0; }"
   HAVE_OLD_GID_OPERATION "")
 
 try_compile_dev_or_ops(destroy_cq erdma_destroy_cq
-  "int erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) { return 0; }"
+  "static int erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) { return 0; }"
   HAVE_DESTROY_CQ_UDATA "")
 
 try_compile_dev_or_ops(destroy_qp erdma_destroy_qp
-  "int erdma_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata) { return 0; }"
+  "static int erdma_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata) { return 0; }"
   HAVE_DESTROY_QP_UDATA "")
 
 try_compile_dev_or_ops(create_ah erdma_create_ah
-  "int erdma_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr, struct ib_udata *udata) { return 0; }"
+  "static int erdma_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr, struct ib_udata *udata) { return 0; }"
   HAVE_CREATE_AH_RDMA_INIT_ATTR "")
 
 try_compile("#include <rdma/ib_umem.h>" "ib_umem_find_best_pgsz(NULL, 0, 0);"
@@ -297,7 +301,7 @@ struct ib_device_ops ops = {
   HAVE_IB_DEVICE_OPS_COMMON "")
 
 try_compile_dev_or_ops(destroy_cq erdma_destroy_cq
-  "void erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) {}"
+  "static void erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) {}"
   HAVE_IB_VOID_DESTROY_CQ "")
 
 try_compile("void erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) {}"
@@ -377,11 +381,11 @@ try_compile("" "int a = IB_ACCESS_OPTIONAL;" HAVE_IB_ACCESS_OPTIONAL "")
 try_compile("" "atomic64_fetch_inc(NULL);" HAVE_ATOMIC64_FETCH_INC "")
 
 try_compile_dev_or_ops(dealloc_pd erdma_dealloc_pd
-  "int erdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata) { return 0; }"
+  "static int erdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata) { return 0; }"
   HAVE_DEALLOC_PD_UDATA_RC "")
 
 try_compile_dev_or_ops(destroy_cq erdma_destroy_cq
-  "int erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) { return 0; }"
+  "static int erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata) { return 0; }"
   HAVE_IB_INT_DESTROY_CQ "")
 
 try_compile("#include <rdma/ib_umem.h>"
@@ -417,23 +421,23 @@ try_compile_dev_or_ops(create_user_ah erdma_create_ah
   HAVE_UVERBS_CMD_MASK_NOT_NEEDED "")
 
 try_compile_dev_or_ops(query_port erdma_query_port
-  "int erdma_query_port(struct ib_device *ibdev, u32 port, struct ib_port_attr *props) { return 0; }"
+  "static int erdma_query_port(struct ib_device *ibdev, u32 port, struct ib_port_attr *props) { return 0; }"
   HAVE_U32_PORT "")
 
 try_compile_dev_or_ops(alloc_hw_port_stats erdma_alloc_hw_port_stats
-  "struct rdma_hw_stats *erdma_alloc_hw_port_stats(struct ib_device *ibdev, u32 port_num) { return 0; }"
+  "static struct rdma_hw_stats *erdma_alloc_hw_port_stats(struct ib_device *ibdev, u32 port_num) { return 0; }"
   HAVE_SPLIT_STATS_ALLOC "")
 
 try_compile_dev_or_ops(alloc_hw_stats erdma_alloc_hw_stats
-  "struct rdma_hw_stats *erdma_alloc_hw_stats(struct ib_device *ibdev, u8 port_num ) { return NULL; }"
+  "static struct rdma_hw_stats *erdma_alloc_hw_stats(struct ib_device *ibdev, u8 port_num ) { return NULL; }"
   HAVE_SINGLE_HW_STATS "")
 
 try_compile_dev_or_ops(alloc_hw_stats erdma_alloc_hw_stats
-  "struct rdma_hw_stats *erdma_alloc_hw_stats(struct ib_device *ibdev, u32 port_num ) { return NULL; }"
+  "static struct rdma_hw_stats *erdma_alloc_hw_stats(struct ib_device *ibdev, u32 port_num ) { return NULL; }"
   HAVE_SINGLE_HW_STATS "")
 
 try_compile_dev_or_ops(get_vector_affinity erdma_get_vector_affinity
-  "const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev, int comp_vector) { return NULL; }"
+  "static const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev, int comp_vector) { return NULL; }"
   HAVE_GET_VECTOR_AFFINITY "")
 
 try_compile("#include <linux/sysfs.h>"
@@ -587,7 +591,7 @@ int i;
 )
 
 try_compile_dev_or_ops(alloc_mr erdma_ib_alloc_mr
-  "struct ib_mr *
+  "static struct ib_mr *
   erdma_ib_alloc_mr(struct ib_pd *ibpd, enum ib_mr_type mr_type, u32 max_num_sg) { return NULL; }"
   HAVE_ALLOC_MR_NO_UDATA "")
 
@@ -706,6 +710,31 @@ down_read(&net_rwsem);
   "
   HAVE_NET_RWSEM ""
 )
+
+try_compile("#include <linux/device.h>"
+  "
+  struct class test_class;
+  const struct device *dev;
+  test_class.devnode(dev, NULL);
+  "
+  HAVE_CLASS_DEVNODE_WITH_CONST_DEV ""
+)
+
+try_compile("#include <linux/device.h>"
+  "
+  struct class *test_class;
+  test_class = class_create(NULL);
+  "
+  HAVE_CLASS_CREATE_ONE_PARAM ""
+)
+
+try_compile("#include <linux/device.h>
+  static char *test_devnode(const struct device *dev, umode_t *mode) { return NULL;}"
+  "
+  static struct class test_class;
+  test_class.devnode = test_devnode;
+  "
+  HAVE_CLASS_DEVNODE_WITH_CONST_DEV_PARAM "")
 
 wait_for_pids()
 message("-- Inspecting kernel - done")

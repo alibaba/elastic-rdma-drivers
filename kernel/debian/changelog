@@ -1,3 +1,15 @@
+erdma (1.1.0-4) unstable; urgency=medium
+
+  * Add RDMA_CM support for compat mode.
+
+ -- Cheng Xu <chengyou@linux.alibaba.com>  Tue, 26 Nov 2024 13:48:56 +0800
+
+erdma (1.1.0-3) unstable; urgency=medium
+
+  * Add OFA_DIR specifying support.
+
+ -- Kai Shen <KaiShen@linux.alibaba.com> Tue, 12 Nov 2024 07:18:39 +0000
+
 erdma (1.1.0-2) unstable; urgency=medium
 
   * Mirror fixes with 1.1.0.

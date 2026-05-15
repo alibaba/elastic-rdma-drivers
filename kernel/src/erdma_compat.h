@@ -62,7 +62,6 @@ int erdma_destroy_ah(struct ib_ah *ibah, u32 flags);
 int erdma_destroy_ah(struct ib_ah *ibah);
 #endif
 
-#ifdef HAVE_ERDMA_MAD
 #include "compat/sw_verbs.h"
 #include "compat/sw_net.h"
 
@@ -95,5 +94,4 @@ int erdma_mad_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
 void erdma_destroy_mad_qp(struct ib_qp *ibqp);
 void detach_sw_pd(struct erdma_pd *pd);
 void detach_sw_cq(struct erdma_cq *cq);
-#endif
 #endif

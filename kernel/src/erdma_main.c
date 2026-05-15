@@ -275,7 +275,7 @@ static int erdma_device_register(struct erdma_dev *dev)
 	 * So, generating the ibdev's name from mac address of the binded
 	 * netdev.
 	 */
-	strlcpy(ibdev->name, "erdma_%d", IB_DEVICE_NAME_MAX);
+	strscpy(ibdev->name, "erdma_%d", IB_DEVICE_NAME_MAX);
 
 	ret = erdma_set_dack_count(dev, 0);
 	if (ret)
@@ -293,11 +293,12 @@ static int erdma_device_register(struct erdma_dev *dev)
 	ret = erdma_enum_and_get_netdev(dev);
 	if (ret)
 		return -EPROBE_DEFER;
-#ifdef HAVE_ERDMA_MAD
-	ret = attach_sw_dev(dev);
-	if (ret)
-		return ret == -ENOENT ? -EPROBE_DEFER : ret;
-#endif
+
+	if (compat_mode) {
+		ret = attach_sw_dev(dev);
+		if (ret)
+			return ret == -ENOENT ? -EPROBE_DEFER : ret;
+	}
 
 	dev->mtu = dev->netdev->mtu;
 	erdma_set_mtu(dev, dev->mtu);
@@ -323,10 +324,11 @@ static int erdma_device_register(struct erdma_dev *dev)
 		dev_err(&dev->pdev->dev,
 			"ib_register_device(%s) failed: ret = %d\n",
 			ibdev->name, ret);
+
 		erdma_remove_dev_from_list(dev);
-#ifdef HAVE_ERDMA_MAD
-		detach_sw_dev(dev);
-#endif
+		if (compat_mode)
+			detach_sw_dev(dev);
+
 		return ret;
 	}
 
@@ -338,11 +340,13 @@ static int erdma_device_register(struct erdma_dev *dev)
 #endif
 	if (ret) {
 		ibdev_err(&dev->ibdev, "failed to register notifier.\n");
+
 		ib_unregister_device(ibdev);
 		erdma_remove_dev_from_list(dev);
-#ifdef HAVE_ERDMA_MAD
-		detach_sw_dev(dev);
-#endif
+
+		if (compat_mode)
+			detach_sw_dev(dev);
+
 		return ret;
 	}
 
@@ -879,13 +883,9 @@ static const struct ib_device_ops erdma_device_ops = {
 	.get_netdev = erdma_get_netdev,
 	.query_pkey = erdma_query_pkey,
 	.modify_cq = erdma_modify_cq,
-#ifdef HAVE_ERDMA_MAD
-#ifdef HAVE_CREATE_AH_RDMA_INIT_ATTR
 	.create_ah = erdma_create_ah,
 	.destroy_ah = erdma_destroy_ah,
 	INIT_RDMA_OBJ_SIZE(ib_ah, sw_ah, ibah),
-#endif
-#endif
 #ifdef HAVE_GET_VECTOR_AFFINITY
 	.get_vector_affinity = erdma_get_vector_affinity,
 #endif
@@ -1146,10 +1146,8 @@ static void erdma_ib_device_remove(struct pci_dev *pdev)
 #endif
 	dma_pool_destroy(dev->db_pool);
 	destroy_workqueue(dev->reflush_wq);
-
-#ifdef HAVE_ERDMA_MAD
-	detach_sw_dev(dev);
-#endif
+	if (compat_mode)
+		detach_sw_dev(dev);
 }
 
 static int erdma_probe(struct pci_dev *pdev, const struct pci_device_id *ent)

@@ -387,7 +387,8 @@ void detach_sw_cq(struct erdma_cq *cq)
 	cq->sw_cq = NULL;
 }
 
-int create_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd, struct sw_dev *sw)
+static int create_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd,
+				   struct sw_dev *sw)
 {
 	struct erdma_qp *qp = sw_qp->master;
 	int ret;
@@ -414,7 +415,7 @@ free_pd:
 	return ret;
 }
 
-void destroy_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd)
+static void destroy_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd)
 {
 	struct erdma_qp *qp = sw_qp->master;
 
@@ -749,10 +750,10 @@ int sw_qp_from_attr(struct sw_qp *qp, struct ib_qp_attr *attr, int mask,
 		qp->attr.qkey = attr->qkey;
 
 	if (mask & IB_QP_AV)
-		sw_init_av(&attr->ah_attr, &qp->pri_av);
+		sw_init_av(&qp->master->dev->ibdev, &attr->ah_attr, &qp->pri_av);
 
 	if (mask & IB_QP_ALT_PATH) {
-		sw_init_av(&attr->alt_ah_attr, &qp->alt_av);
+		sw_init_av(&qp->master->dev->ibdev, &attr->alt_ah_attr, &qp->alt_av);
 		qp->attr.alt_port_num = attr->alt_port_num;
 		qp->attr.alt_pkey_index = attr->alt_pkey_index;
 		qp->attr.alt_timeout = attr->alt_timeout;

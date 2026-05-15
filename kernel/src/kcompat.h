@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/types.h>
+#include <rdma/ib_cache.h>
 #include "config.h"
 
 #define ERDMA_MAJOR_VER 0
@@ -324,6 +325,29 @@ static inline void idr_remove_safe(struct idr *idr, int id, spinlock_t *lock)
 	idr_remove(idr, id);
 	spin_unlock_irqrestore(lock, flags);
 }
+
+static inline int idr_store_safe(struct idr *idr, int id, void *ptr,
+				 spinlock_t *lock)
+{
+	unsigned long flags;
+	void *entry;
+	int ret;
+
+	spin_lock_irqsave(lock, flags);
+	entry = idr_find(idr, id);
+	if (entry == NULL) {
+		ret = idr_alloc(idr, ptr, id, id + 1, GFP_NOWAIT);
+	} else {
+		entry = idr_replace(idr, ptr, id);
+		if (IS_ERR(entry))
+			ret = PTR_ERR(entry);
+		else
+			ret = 0;
+	}
+	spin_unlock_irqrestore(lock, flags);
+
+	return ret;
+}
 #endif
 
 #ifndef HAVE_IB_UMEM_FIND_SINGLE_PG_SIZE
@@ -354,6 +378,29 @@ static inline void be32_to_cpu_array(u32 *dst, const __be32 *src, size_t len)
 
 	for (i = 0; i < len; i++)
 		dst[i] = be32_to_cpu(src[i]);
+}
+#endif
+
+#ifndef HAVE_IB_GLOBAL_ROUTE_WITH_SGID_ATTR
+static inline int ib_get_sgid_attr(struct ib_device *ibdev,
+				   struct rdma_ah_attr *ah_attr,
+				   union ib_gid *sgid,
+				   struct ib_gid_attr *sgid_attr, int *ntype)
+{
+	int err;
+
+	err = ib_get_cached_gid(ibdev, rdma_ah_get_port_num(ah_attr),
+				rdma_ah_read_grh(ah_attr)->sgid_index, sgid,
+				sgid_attr);
+	if (err)
+		return err;
+
+	*ntype = ib_gid_to_network_type(sgid_attr->gid_type, sgid);
+
+	if (sgid_attr->ndev)
+		dev_put(sgid_attr->ndev);
+
+	return 0;
 }
 #endif
 

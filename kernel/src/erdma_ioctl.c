@@ -493,7 +493,8 @@ static int erdma_ioctl_info_cmd(struct erdma_dev *edev,
 	return ret;
 }
 
-int erdma_ioctl_stat_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
+static int erdma_ioctl_stat_cmd(struct erdma_dev *edev,
+				struct erdma_ioctl_msg *msg)
 {
 	int ret;
 
@@ -522,7 +523,8 @@ int erdma_ioctl_stat_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
 	return 0;
 }
 
-int erdma_ioctl_dump_cmd(struct erdma_dev *edev, struct erdma_ioctl_msg *msg)
+static int erdma_ioctl_dump_cmd(struct erdma_dev *edev,
+				struct erdma_ioctl_msg *msg)
 {
 	u32 qe_idx = msg->in.dump_req.qe_idx;
 	u32 qn = msg->in.dump_req.qn;
@@ -752,7 +754,13 @@ long chardev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	return do_ioctl(cmd, arg);
 }
 
-static char *erdma_chrdev_devnode(struct device *dev, umode_t *mode)
+static char *erdma_chrdev_devnode(
+#ifdef HAVE_CLASS_DEVNODE_WITH_CONST_DEV_PARAM
+	const struct device *dev,
+#else
+	struct device *dev,
+#endif
+	umode_t *mode)
 {
 	if (mode)
 		*mode = 0666;
@@ -804,7 +812,11 @@ int erdma_chrdev_init(void)
 		return ret;
 	}
 
+#ifndef HAVE_CLASS_CREATE_ONE_PARAM
 	erdma_chrdev_class = class_create(THIS_MODULE, ERDMA_CHRDEV_NAME);
+#else
+	erdma_chrdev_class = class_create(ERDMA_CHRDEV_NAME);
+#endif
 	if (IS_ERR(erdma_chrdev_class)) {
 		ret = PTR_ERR(erdma_chrdev_class);
 		pr_err("create class failed.\n");

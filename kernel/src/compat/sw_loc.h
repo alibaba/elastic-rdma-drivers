@@ -8,7 +8,7 @@
 #define SW_LOC_H
 
 /* sw_av.c */
-void sw_init_av(struct rdma_ah_attr *attr, struct sw_av *av);
+void sw_init_av(struct ib_device *ibdev, struct rdma_ah_attr *attr, struct sw_av *av);
 
 int sw_av_chk_attr(struct sw_dev *sw, struct rdma_ah_attr *attr);
 
@@ -17,7 +17,7 @@ void sw_av_from_attr(u8 port_num, struct sw_av *av,
 
 void sw_av_to_attr(struct sw_av *av, struct rdma_ah_attr *attr);
 
-void sw_av_fill_ip_info(struct sw_av *av, struct rdma_ah_attr *attr);
+void sw_av_fill_ip_info(struct ib_device *ibdev, struct sw_av *av, struct rdma_ah_attr *attr);
 
 struct sw_av *sw_get_av(struct sw_pkt_info *pkt);
 

@@ -47,7 +47,7 @@ int sw_create_ah(struct ib_ah *ibah,
 	if (err)
 		return err;
 
-	sw_init_av(attr, &ah->av);
+	sw_init_av(&dev->ibdev, attr, &ah->av);
 	return 0;
 }
 
