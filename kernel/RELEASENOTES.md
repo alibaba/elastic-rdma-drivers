@@ -9,6 +9,11 @@ verified systems is recommended which listed below:
 * Alinux 2/3
 * Anolis 8.4/8.5
 
+## r0.2.38
+* Add scatter mtt of QP/CQ buffer support
+* Add wwi perf configure
+* Add gcov build parameter
+
 ## r0.2.37
 * RDMA/erdma: Add d-ack capbility and d-ack count setting support
 * RDMA/erdma: Add get_vecotr_affinity support

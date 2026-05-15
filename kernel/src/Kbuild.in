@@ -14,7 +14,7 @@ LINUXINCLUDE := \
 	${LINUXINCLUDE}
 endif
 
-KBUILD_CFLAGS += -Werror
+KBUILD_CFLAGS += -Werror $(GCOV_FLAGS)
 
 obj-m := erdma.o
 erdma-y := $(patsubst %.c,%.o, $(filter %.c, @erdma_sources_string@))

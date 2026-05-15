@@ -5,7 +5,7 @@
 
 Name:		%{name}
 Version:	%{driver_version}
-Release:	9%{?dist}
+Release:	1%{?dist}
 Summary:	%{name} kernel module
 
 Group:		System/Kernel
@@ -130,12 +130,16 @@ install -m 644 compat/sw_verbs.h	%{buildroot}%{install_path}/src/compat
 /etc/modprobe.d/erdma.conf
 
 %changelog
-* Wed Jun 7 2023 Cheng Xu <chengyou.xc@linux.alibaba-inc.com> - 1.0.2
-- Bump to internal version 0.2.37
+* Tue Sep 10 2024 Cheng Xu <chengyou@linux.alibaba.com> - 1.1.0
+- Bump to version 0.2.38
 - Get details from RELEASENOTES.md if needed.
 
-* Thu Mar 9 2023 Cheng Xu <chengyou.xc@linux.alibaba-inc.com> - 1.0.1
-- Bump to internal version 0.2.36
+* Wed Jun 7 2023 Cheng Xu <chengyou@linux.alibaba.com> - 1.0.2
+- Bump to version 0.2.37
+- Get details from RELEASENOTES.md if needed.
+
+* Thu Mar 9 2023 Cheng Xu <chengyou@linux.alibaba.com> - 1.0.1
+- Bump to version 0.2.36
 
 * Fri Mar 8 2019 Robert Wespetal <wesper@amazon.com> - 1.0.0
 - initial build for RHEL

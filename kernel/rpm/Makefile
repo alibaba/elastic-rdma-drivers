@@ -2,7 +2,7 @@
 
 NAME = erdma
 SPEC = $(NAME).spec
-VERSION = 1.0.2
+VERSION = 1.1.0
 
 TOPDIR  := $(shell git rev-parse --show-toplevel)
 TAG	?= HEAD

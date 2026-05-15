@@ -330,8 +330,8 @@ struct erdma_cmdq_create_qp_req {
 	u64 rq_buf_addr;
 	u32 sq_mtt_cfg;
 	u32 rq_mtt_cfg;
-	u64 sq_db_info_dma_addr;
-	u64 rq_db_info_dma_addr;
+	u64 sq_dbrec_dma;
+	u64 rq_dbrec_dma;
 
 	u64 sq_mtt_entry[3];
 	u64 rq_mtt_entry[3];
@@ -619,7 +619,7 @@ struct erdma_cmdq_query_stats_resp {
 struct erdma_cmdq_query_qpc_resp {
 	struct erdma_cmdq_query_resp_hdr hdr;
 
-	struct{
+	struct {
 		u8 status; /* 0 - disabled, 1 - enabled. */
 		u8 qbuf_page_offset;
 		u8 qbuf_page_size;
@@ -649,8 +649,8 @@ struct erdma_cmdq_query_qpc_resp {
 	u16 fw_sq_ci;
 
 	u16 fw_rq_ci;
-	u8  sq_in_flush;
-	u8  rq_in_flush;
+	u8 sq_in_flush;
+	u8 rq_in_flush;
 	u16 sq_flushed_pi;
 	u16 rq_flushed_pi;
 

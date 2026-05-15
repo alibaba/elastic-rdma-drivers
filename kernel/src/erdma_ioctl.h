@@ -122,7 +122,7 @@ struct erdma_qp_info {
 		__u64 mtt_entry[4];
 		__u64 va;
 		__u64 len;
-	} sq_mtt, rq_mtt;
+	} sq_mem, rq_mem;
 
 	__u8 sq_enable;
 	__u8 sqbuf_page_offset;

@@ -55,7 +55,14 @@ else()
   message("-- ERDMA legacy mode disabled")
 endif()
 
-set(module_cmd make -C ${KERNEL_DIR} M=${CMAKE_CURRENT_BINARY_DIR} OFA_DIR=${OFA_DIR} KERNEL_DIR=${KERNEL_DIR} )
+if(ENABLE_GCOV_TEST)
+  message("-- GCOV TEST MODE")
+  set(GCOV_FLAGS "-ftest-coverage")
+else()
+  set(GCOV_FLAGS "")
+endif()
+
+set(module_cmd make -C ${KERNEL_DIR} M=${CMAKE_CURRENT_BINARY_DIR} GCOV_FLAGS=${GCOV_FLAGS} OFA_DIR=${OFA_DIR} KERNEL_DIR=${KERNEL_DIR} )
 
 add_custom_command(OUTPUT erdma.ko
   COMMAND ${module_cmd} modules

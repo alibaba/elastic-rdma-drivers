@@ -26,7 +26,7 @@ static void notify_cq(struct erdma_cq *cq, u8 solcitied)
 		FIELD_PREP(ERDMA_CQDB_CMDSN_MASK, cq->kern_cq.cmdsn) |
 		FIELD_PREP(ERDMA_CQDB_CI_MASK, cq->kern_cq.ci);
 
-	*cq->kern_cq.db_record = db_data;
+	*cq->kern_cq.dbrec = db_data;
 	writeq(db_data, cq->kern_cq.db);
 }
 
@@ -50,12 +50,14 @@ int erdma_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 	}
 
 	if (!dim_timeout) {
-		notify_cq(cq, (flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
+		notify_cq(cq,
+			  (flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
 		cq->kern_cq.notify_cnt++;
 	} else {
 		cq->dim.flags |= flags;
-		hrtimer_start(&cq->dim.timer, ns_to_ktime(dim_timeout * NSEC_PER_USEC),
-			HRTIMER_MODE_REL_PINNED);
+		hrtimer_start(&cq->dim.timer,
+			      ns_to_ktime(dim_timeout * NSEC_PER_USEC),
+			      HRTIMER_MODE_REL_PINNED);
 	}
 unlock:
 	spin_unlock_irqrestore(&cq->kern_cq.lock, irq_flags);
@@ -227,7 +229,8 @@ enum hrtimer_restart cq_timer_fn(struct hrtimer *t)
 {
 	struct erdma_cq *cq = container_of(t, struct erdma_cq, dim.timer);
 
-	notify_cq(cq, (cq->dim.flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
+	notify_cq(cq,
+		  (cq->dim.flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED);
 	cq->kern_cq.notify_cnt++;
 	cq->dim.flags = 0;
 

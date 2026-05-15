@@ -97,31 +97,45 @@ static inline u8 to_erdma_access_flags(int access)
 	       (access & IB_ACCESS_REMOTE_ATOMIC ? ERDMA_MR_ACC_RA : 0);
 }
 
-struct erdma_pbl {
-	u64 *buf;
+struct erdma_mtt {
+	void *buf;
 	size_t size;
 
 	bool continuous;
 	union {
 		dma_addr_t buf_dma;
 		struct {
-			struct scatterlist *sglist;
-			u32 nsg;
+			dma_addr_t *dma_addrs;
+			u32 npages;
 			u32 level;
 		};
 	};
 
-	struct erdma_pbl *low_level;
+	struct erdma_mtt *low_level;
+};
+
+enum erdma_mem_type {
+	ERDMA_UMEM = 0,
+	ERDMA_KMEM = 1,
+};
+
+struct erdma_kmem {
+	dma_addr_t *dma_addrs;
+	u64 npages;
 };
 
 struct erdma_mem {
-	struct ib_umem *umem;
+	enum erdma_mem_type type;
+	union {
+		struct ib_umem *umem;
+		struct erdma_kmem *kmem;
+	};
 	u32 page_size;
 	u32 page_offset;
 	u32 page_cnt;
 	u32 mtt_nents;
 
-	struct erdma_pbl *pbl;
+	struct erdma_mtt *mtt;
 
 	u64 va;
 	u64 len;
@@ -143,11 +157,11 @@ struct erdma_user_dbrecords_page {
 };
 
 struct erdma_uqp {
-	struct erdma_mem sq_mtt;
-	struct erdma_mem rq_mtt;
+	struct erdma_mem sq_mem;
+	struct erdma_mem rq_mem;
 
-	dma_addr_t sq_db_info_dma_addr;
-	dma_addr_t rq_db_info_dma_addr;
+	dma_addr_t sq_dbrec_dma;
+	dma_addr_t rq_dbrec_dma;
 
 	struct erdma_user_dbrecords_page *user_dbr_page;
 
@@ -161,8 +175,7 @@ struct erdma_kqp {
 	u64 *swr_tbl;
 	void *hw_sq_db;
 	void *sq_buf;
-	dma_addr_t sq_buf_dma_addr;
-	void *sq_db_info;
+	void *sq_dbrec;
 
 	spinlock_t rq_lock ____cacheline_aligned;
 	u16 rq_pi;
@@ -170,11 +183,13 @@ struct erdma_kqp {
 	u64 *rwr_tbl;
 	void *hw_rq_db;
 	void *rq_buf;
-	dma_addr_t rq_buf_dma_addr;
-	void *rq_db_info;
+	void *rq_dbrec;
 
-	dma_addr_t sq_db_info_dma_addr;
-	dma_addr_t rq_db_info_dma_addr;
+	struct erdma_mem sq_mem;
+	struct erdma_mem rq_mem;
+
+	dma_addr_t sq_dbrec_dma;
+	dma_addr_t rq_dbrec_dma;
 
 	u8 sig_all;
 };
@@ -265,20 +280,21 @@ struct erdma_qp {
 
 struct erdma_kcq_info {
 	void *qbuf;
-	dma_addr_t qbuf_dma_addr;
+	struct erdma_mem qbuf_mtt;
+	dma_addr_t dbrec_dma;
 	u32 ci;
 	u32 cmdsn;
 	u32 notify_cnt;
 
 	spinlock_t lock;
 	u8 __iomem *db;
-	u64 *db_record;
+	u64 *dbrec;
 };
 
 struct erdma_ucq_info {
 	struct erdma_mem qbuf_mtt;
 	struct erdma_user_dbrecords_page *user_dbr_page;
-	dma_addr_t db_info_dma_addr;
+	dma_addr_t dbrec_dma;
 };
 
 struct erdma_dim {
@@ -489,7 +505,8 @@ int erdma_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
 
 int erdma_query_hw_stats(struct erdma_dev *dev);
 #ifdef HAVE_GET_VECTOR_AFFINITY
-const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev, int comp_vector);
+const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev,
+						int comp_vector);
 #endif
 
 #include "erdma_compat.h"

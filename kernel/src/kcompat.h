@@ -18,7 +18,7 @@
 
 #define ERDMA_MAJOR_VER 0
 #define ERDMA_MEDIUM_VER 2
-#define ERDMA_MINOR_VER 37
+#define ERDMA_MINOR_VER 38
 
 #include <rdma/ib_verbs.h>
 #ifndef RDMA_DRIVER_ERDMA
