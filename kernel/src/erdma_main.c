@@ -806,6 +806,7 @@ static int erdma_res_cb_init(struct erdma_dev *dev)
 		if (!dev->res_cb[i].bitmap)
 			goto err;
 	}
+	set_bit(0, dev->res_cb[ERDMA_RES_TYPE_STAG_IDX].bitmap);
 
 	return 0;
 

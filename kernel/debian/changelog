@@ -1,3 +1,9 @@
+erdma (1.1.0-8) unstable; urgency=medium
+
+  * Avoid mr lkey from being 0
+
+ -- Haiwei Lin <linhaiwei@linux.alibaba.com>  Thu, 20 Mar 2025 11:22:15 +0800
+
 erdma (1.1.0-7) unstable; urgency=medium
 
   * Fix compile issue in ubuntu24.04
