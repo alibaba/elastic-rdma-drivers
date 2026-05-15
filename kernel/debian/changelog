@@ -1,3 +1,10 @@
+erdma (1.2.0-6) unstable; urgency=medium
+
+  * Support registering 4G MR using 1G hugepage
+  * Change default CC algorithm to MPCC for compat mode
+
+ -- Boshi Yu <boshiyu@linux.alibaba.com> Tue, 31 Mar 2026 15:35:05 +0800
+
 erdma (1.2.0-5) unstable; urgency=medium
 
   * Fix deadlock when change netns

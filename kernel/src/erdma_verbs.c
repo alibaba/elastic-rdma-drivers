@@ -119,12 +119,12 @@ static int create_qp_cmd(struct erdma_dev *dev, struct erdma_qp *qp,
 static int regmr_cmd(struct erdma_dev *dev, struct erdma_mr *mr)
 {
 	struct erdma_pd *pd = to_epd(mr->ibmr.pd);
+	struct erdma_cmdq_reg_mr_req req = {};
 	u32 mtt_type = ERDMA_MR_INLINE_MTT;
-	struct erdma_cmdq_reg_mr_req req;
 
 	erdma_cmdq_build_reqhdr(&req.hdr, CMDQ_SUBMOD_RDMA, CMDQ_OPCODE_REG_MR);
 
-	if (mr->type == ERDMA_MR_TYPE_FRMR ||
+	if (mr->type == ERDMA_MR_TYPE_FRMR || mr->mem.len > U32_MAX ||
 	    mr->mem.page_cnt > ERDMA_MAX_INLINE_MTT_ENTRIES) {
 		if (mr->mem.mtt->continuous) {
 			req.phy_addr[0] = mr->mem.mtt->buf_dma;
@@ -148,8 +148,6 @@ static int regmr_cmd(struct erdma_dev *dev, struct erdma_mr *mr)
 			      ilog2(mr->mem.page_size)) |
 		   FIELD_PREP(ERDMA_CMD_REGMR_MTT_TYPE_MASK, mtt_type) |
 		   FIELD_PREP(ERDMA_CMD_REGMR_MTT_CNT_MASK, mr->mem.page_cnt);
-	/* Clear this field because hardware will check it. */
-	req.size = 0;
 
 	if (mr->type == ERDMA_MR_TYPE_DMA)
 		goto post_cmd;
@@ -159,14 +157,14 @@ static int regmr_cmd(struct erdma_dev *dev, struct erdma_mr *mr)
 		req.size = mr->mem.len;
 	}
 
-	if (!mr->mem.mtt->continuous && mr->mem.mtt->level > 1) {
+	if (!mr->mem.mtt->continuous && mtt_type != ERDMA_MR_INLINE_MTT) {
 		req.cfg0 |= FIELD_PREP(ERDMA_CMD_MR_VERSION_MASK, 1);
 		req.cfg2 |= FIELD_PREP(ERDMA_CMD_REGMR_PBL_PAGESIZE_MASK,
 				       PAGE_SHIFT - ERDMA_HW_PAGE_SHIFT);
 		req.size_h = upper_32_bits(mr->mem.len);
 		req.mtt_cnt_h = mr->mem.page_cnt >> 20;
 		ibdev_dbg(&dev->ibdev,
-			  "cfg0 %x, cfg2 %x, size_h %u, mtt_cmt_h %u\n",
+			  "cfg0 %x, cfg2 %x, size_h %u, mtt_cnt_h %u\n",
 			  req.cfg0, req.cfg2, req.size_h, req.mtt_cnt_h);
 		ibdev_dbg(&dev->ibdev, "mtt_0_level: 0x%llx\n",
 			  req.phy_addr[0]);

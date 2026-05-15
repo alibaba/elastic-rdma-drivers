@@ -23,7 +23,11 @@ static unsigned int vector_num = ERDMA_NUM_MSIX_VEC;
 module_param(vector_num, uint, 0444);
 MODULE_PARM_DESC(vector_num, "number of compeletion vectors");
 
+#ifdef ENABLE_COMPAT_MODE
+static int default_cc = ERDMA_CC_MPCC;
+#else
 static int default_cc = -1;
+#endif
 module_param(default_cc, int, 0444);
 MODULE_PARM_DESC(default_cc, "default cc method");
 
