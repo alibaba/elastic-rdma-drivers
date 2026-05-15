@@ -252,6 +252,27 @@ static const struct file_operations cap_fops = {
 	.read = cap_read,
 };
 
+static ssize_t mtte_usage_read(struct file *filp, char __user *buf, size_t count,
+			 loff_t *pos)
+{
+	struct erdma_dev *dev;
+	char cbuf[40];
+	int ret;
+
+	dev = filp->private_data;
+
+	ret = snprintf(cbuf, sizeof(cbuf), "%u/%u\n",
+		       atomic_read(&dev->num_mtte), dev->attrs.max_mtte);
+
+	return simple_read_from_buffer(buf, count, pos, cbuf, ret);
+}
+
+static const struct file_operations mtte_usage_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read = mtte_usage_read,
+};
+
 int erdma_debugfs_files_create(struct erdma_dev *dev)
 {
 	struct dentry *ent;
@@ -287,6 +308,11 @@ int erdma_debugfs_files_create(struct erdma_dev *dev)
 
 	ent = debugfs_create_file("cap", 0400, dev->dbg_root, dev,
 				       &cap_fops);
+	if (!ent)
+		goto err_out;
+
+	ent = debugfs_create_file("mtte_usage", 0400, dev->dbg_root, dev,
+				       &mtte_usage_fops);
 	if (!ent)
 		goto err_out;
 

@@ -277,7 +277,7 @@ static int erdma_fill_qp_info(struct erdma_dev *dev, u32 qpn,
 	erdma_qp_get(qp);
 
 	qp_info->hw_info_valid = 0;
-	qp_info->qpn = qp->ibqp.qp_num;
+	qp_info->qpn = QP_ID(qp);
 	qp_info->qp_state = qp->attrs.state;
 	qp_info->ref_cnt = kref_read(&qp->ref);
 	qp_info->qtype = qp->attrs.qp_type;

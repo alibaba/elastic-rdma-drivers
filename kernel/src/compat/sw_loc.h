@@ -73,10 +73,6 @@ enum copy_direction {
 void sw_mem_init_dma(struct sw_pd *pd,
 		      int access, struct sw_mem *mem);
 
-int sw_mem_init_user(struct sw_pd *pd, u64 start,
-		      u64 length, u64 iova, int access, struct ib_udata *udata,
-		      struct sw_mem *mr);
-
 int sw_mem_init_fast(struct sw_pd *pd,
 		      int max_pages, struct sw_mem *mem);
 
@@ -120,7 +116,8 @@ int sw_qp_chk_init(struct sw_dev *sw, struct ib_qp_init_attr *init);
 int sw_qp_from_init(struct sw_dev *sw, struct sw_qp *qp,
 		     struct ib_qp_init_attr *init,
 		     struct sw_create_qp_resp __user *uresp,
-		     struct ib_pd *ibpd, struct ib_udata *udata);
+		     struct ib_pd *ibpd, struct ib_udata *udata,
+		     struct ib_ucontext *uctx);
 
 int sw_qp_to_init(struct sw_qp *qp, struct ib_qp_init_attr *init);
 
@@ -252,5 +249,13 @@ drop:
 done:
 	return err;
 }
+
+int sw_mem_init_user(struct sw_pd *pd, u64 start, u64 length, u64 iova,
+		     int access, struct ib_udata *udata,
+		     struct ib_ucontext *uctx, struct sw_mem *mem);
+struct ib_mr *sw_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
+			     u64 iova, int access, struct ib_udata *udata,
+			     struct ib_ucontext *uctx, u32 stag);
+int sw_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata);
 
 #endif /* SW_LOC_H */

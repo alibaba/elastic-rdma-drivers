@@ -7,10 +7,13 @@
 #ifndef __ERDMA_VERBS_H__
 #define __ERDMA_VERBS_H__
 
+#include <rdma/uverbs_ioctl.h>
+
 #include "erdma.h"
 
 /* RDMA Capability. */
 #define ERDMA_MAX_PD (128 * 1024)
+#define ERDMA_MAX_UMEM (128 * 1024)
 #define ERDMA_MAX_SEND_WR 8192
 #define ERDMA_MAX_ORD 128
 #define ERDMA_MAX_IRD 128
@@ -64,13 +67,16 @@ struct erdma_pd {
 	struct ib_pd ibpd;
 	u32 pdn;
 	struct sw_pd *sw_pd;
+	/* Protect corresponding sw data */
+	struct mutex sw_lock;
+	struct list_head mrs;
 };
 
 /*
  * MemoryRegion definition.
  */
 #define ERDMA_MAX_INLINE_MTT_ENTRIES 4
-#define MTT_SIZE(mtt_cnt) ((mtt_cnt) << 3) /* per mtt takes 8 Bytes. */
+#define MTT_SIZE(mtt_cnt) ((mtt_cnt) << 3) /* per mtt entry takes 8 Bytes. */
 #define ERDMA_MR_MAX_MTT_CNT 524288
 #define ERDMA_MTT_ENTRY_SIZE 8
 
@@ -95,6 +101,14 @@ static inline u8 to_erdma_access_flags(int access)
 	       (access & IB_ACCESS_REMOTE_ATOMIC ? ERDMA_MR_ACC_RA : 0);
 }
 
+static inline u8 to_ib_access_flags(int access)
+{
+	return (access & ERDMA_MR_ACC_RR ? IB_ACCESS_REMOTE_READ : 0) |
+	       (access & ERDMA_MR_ACC_LW ? IB_ACCESS_LOCAL_WRITE : 0) |
+	       (access & ERDMA_MR_ACC_RW ? IB_ACCESS_REMOTE_WRITE : 0) |
+	       (access & ERDMA_MR_ACC_RA ? IB_ACCESS_REMOTE_ATOMIC : 0);
+}
+
 struct erdma_mtt {
 	void *buf;
 	size_t size;
@@ -115,6 +129,7 @@ struct erdma_mtt {
 enum erdma_mem_type {
 	ERDMA_UMEM = 0,
 	ERDMA_KMEM = 1,
+	ERDMA_UMEM_DEVX = 2,
 };
 
 struct erdma_kmem {
@@ -127,6 +142,7 @@ struct erdma_mem {
 	union {
 		struct ib_umem *umem;
 		struct erdma_kmem *kmem;
+		void *devx_umem;
 	};
 	u32 page_size;
 	u32 page_offset;
@@ -135,7 +151,11 @@ struct erdma_mem {
 
 	struct erdma_mtt *mtt;
 
-	u64 va;
+	u64 start;
+	union {
+		u64 va;
+		u32 offset; /* offset in dev_umem */
+	};
 	u64 len;
 };
 
@@ -145,6 +165,8 @@ struct erdma_mr {
 	u8 type;
 	u8 access;
 	u8 valid;
+	struct list_head list;
+	struct sw_mem *sw_mr;
 };
 
 struct erdma_user_dbrecords_page {
@@ -272,6 +294,7 @@ struct erdma_qp {
 #ifndef HAVE_RDMA_RESTRACK_ENTRY_USER
 	int user;
 #endif
+	void (*event)(struct erdma_qp *, enum ib_event_type);
 };
 
 struct erdma_kcq_info {
@@ -320,9 +343,12 @@ struct erdma_cq {
 	struct erdma_dim dim;
 	bool is_soft;
 	struct sw_cq *sw_cq;
+	struct mutex sw_lock;
+	void (*comp)(struct erdma_cq *);
+	void (*event)(struct erdma_cq *, enum ib_event_type);
 };
 
-#define QP_ID(qp) ((qp)->ibqp.qp_num)
+#define QP_ID(qp) ((qp)->ibqp.qp_num & 0x1FFFF)
 
 static inline struct erdma_qp *find_qp_by_qpn(struct erdma_dev *dev, int id)
 {
@@ -450,6 +476,7 @@ int erdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
 #else
 int erdma_destroy_cq(struct ib_cq *ibcq);
 #endif
+void erdma_disassociate_ucontext(struct ib_ucontext *ibcontext);
 int erdma_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
 struct ib_mr *erdma_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 len,
 				u64 virt, int access, struct ib_udata *udata);
@@ -490,7 +517,6 @@ struct ib_mr *erdma_ib_alloc_mr(struct ib_pd *ibpd, enum ib_mr_type mr_type,
 #endif
 int erdma_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg, int sg_nents,
 		    unsigned int *sg_offset);
-void erdma_disassociate_ucontext(struct ib_ucontext *ibcontext);
 void erdma_port_event(struct erdma_dev *dev, enum ib_event_type reason);
 void erdma_set_mtu(struct erdma_dev *dev, u32 mtu);
 int erdma_set_retrans_num(struct erdma_dev *dev, u32 retrans_num);
@@ -507,6 +533,33 @@ int erdma_query_hw_stats(struct erdma_dev *dev);
 const struct cpumask *erdma_get_vector_affinity(struct ib_device *ibdev,
 						int comp_vector);
 #endif
+
+#ifdef HAVE_UAPI_DEF_SUPPORT
+struct erdma_mtt *erdma_create_mtt(struct erdma_dev *dev, size_t size,
+				   bool force_continuous);
+void erdma_destroy_mtt(struct erdma_dev *dev, struct erdma_mtt *mtt);
+int erdma_create_stag(struct erdma_dev *dev, u32 *stag);
+
+extern const struct uapi_definition erdma_devx_defs[];
+#endif
+
+static inline void erdma_stats_add_mtt_nents(struct erdma_dev *dev, int mtt_nents, int inline_thresh) {
+	int cnt;
+
+	if (mtt_nents > inline_thresh) {
+		cnt = ALIGN(mtt_nents, ERDMA_MTTES_ALIGN);
+		atomic_add(cnt, &dev->num_mtte);
+	}
+}
+
+static inline void erdma_stats_sub_mtt_nents(struct erdma_dev *dev, int mtt_nents, int inline_thresh) {
+	int cnt;
+
+	if (mtt_nents > inline_thresh) {
+		cnt = ALIGN(mtt_nents, ERDMA_MTTES_ALIGN);
+		atomic_sub(cnt, &dev->num_mtte);
+	}
+}
 
 #include "erdma_compat.h"
 

@@ -47,6 +47,7 @@ struct erdma_eq {
 
 	void __iomem *db;
 	u64 *dbrec;
+	dma_addr_t dbrec_dma;
 };
 
 struct erdma_cmdq_sq {
@@ -167,8 +168,10 @@ struct erdma_devattr {
 	u64 max_mr_size;
 	u32 max_mr;
 	u32 max_pd;
+	u32 max_umem;
 	u32 max_mw;
 	u32 local_dma_key;
+	u32 max_mtte;
 };
 
 #define ERDMA_IRQNAME_SIZE 50
@@ -238,14 +241,17 @@ struct erdma_dev {
 #ifdef HAVE_XARRAY_API
 	struct xarray qp_xa;
 	struct xarray cq_xa;
+	struct xarray umem_xa;
 #else
 	spinlock_t idr_lock;
 	struct idr qp_idr;
 	struct idr cq_idr;
+	struct idr umem_idr;
 #endif
 
 	u32 next_alloc_qpn;
 	u32 next_alloc_cqn;
+	u32 next_alloc_umem_id;
 
 	spinlock_t db_bitmap_lock;
 	/* We provide max 64 uContexts that each has one SQ doorbell Page. */
@@ -260,6 +266,8 @@ struct erdma_dev {
 	atomic_t num_cep;
 	struct list_head cep_list;
 
+	atomic_t num_mtte;
+
 	/* Fields for compat */
 	struct list_head dev_list;
 	refcount_t refcount;
@@ -270,6 +278,19 @@ struct erdma_dev {
 
 	struct dentry *dbg_root;
 };
+
+#ifdef HAVE_XARRAY_API
+#define ERDMA_ALLOC_RES_ID(_dev, _type, _id_ptr, _obj, _limit, _next) \
+	xa_alloc_cyclic(&(_dev)->_type##_xa, _id_ptr, _obj,           \
+			XA_LIMIT(1, _limit - 1), &(_dev)->_next, GFP_KERNEL);
+#define ERDMA_FREE_RES_ID(_dev, _type, _id) xa_erase(&(_dev)->_type##_xa, _id);
+#else
+#define ERDMA_ALLOC_RES_ID(_dev, _type, _id_ptr, _obj, _limit, _next) \
+	idr_alloc_cyclic_safe(&(_dev)->_type##_idr, _id_ptr, _obj,    \
+			      &(_dev)->idr_lock, &(_dev)->_next, _limit);
+#define ERDMA_FREE_RES_ID(_dev, _type, _id) \
+	idr_remove_safe(&(_dev)->_type##_idr, _id, &(_dev)->idr_lock);
+#endif
 
 static inline void *get_queue_entry(void *qbuf, u32 idx, u32 depth, u32 shift)
 {
@@ -326,7 +347,8 @@ void notify_eq(struct erdma_eq *eq);
 void *get_next_valid_eqe(struct erdma_eq *eq);
 
 int erdma_aeq_init(struct erdma_dev *dev);
-void erdma_aeq_destroy(struct erdma_dev *dev);
+int erdma_eq_common_init(struct erdma_dev *dev, struct erdma_eq *eq, u32 depth);
+void erdma_eq_destroy(struct erdma_dev *dev, struct erdma_eq *eq);
 
 void erdma_aeq_event_handler(struct erdma_dev *dev);
 void erdma_ceq_completion_handler(struct erdma_eq_cb *ceq_cb);
@@ -348,5 +370,7 @@ void erdma_debugfs_unregister(void);
 int erdma_debugfs_files_create(struct erdma_dev *dev);
 void erdma_debugfs_files_destroy(struct erdma_dev *dev);
 extern struct dentry *erdma_debugfs_root;
+
+struct erdma_dev *erdma_device_get_by_dgid(union ib_gid *dgid);
 
 #endif

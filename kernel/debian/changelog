@@ -1,3 +1,39 @@
+erdma (1.2.0-3) unstable; urgency=medium
+
+  * Support DEVX and DeepEP
+
+ -- Cheng Xu <chengyou@linux.alibaba.com> Wed, 10 Dec 2025 18:29:30 +0800
+
+erdma (1.2.0-2) unstable; urgency=medium
+
+  * Avoid small page size when reg large physcially continous memory.
+
+ -- Cheng Xu <chengyou@linux.alibaba.com> Mon, 10 Nov 2025 10:50:31 +0800
+
+erdma (1.2.0-1) unstable; urgency=medium
+
+  * Update to 1.2.0 (version 0.2.39), Detail can be seen in RELEASENOTES.md
+
+ -- Boshi Yu <boshiyu@linux.alibaba.com> Wed, 9 Jul 2025 14:44:25 +0800
+
+erdma (1.1.0-11) unstable; urgency=medium
+
+  * Handle missing CMDQ EQ interrupt correctly
+
+ -- Boshi Yu <boshiyu@linux.alibaba.com>  Mon, 18 Aug 2025 15:41:28 +0800
+
+erdma (1.1.0-10) unstable; urgency=medium
+
+  * Add alios kernel ver 4.9 support
+
+ -- Haiwei Lin <linhaiwei@linux.alibaba.com>  Fri, 20 Jun 2025 10:01:32 +0800
+
+erdma (1.1.0-9) unstable; urgency=medium
+
+  * Add user QP wqes reflush support
+
+ -- Kai Shen <KaiShen@linux.alibaba.com>  Tue, 29 Apr 2025 02:40:26 +0000
+
 erdma (1.1.0-8) unstable; urgency=medium
 
   * Avoid mr lkey from being 0

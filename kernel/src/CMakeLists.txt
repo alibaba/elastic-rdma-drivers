@@ -6,10 +6,10 @@ list(APPEND erdma_sources
   erdma_eq.c erdma_cm.c erdma_cm.h erdma_cmdq.c erdma_cq.c
   erdma_hw.h erdma_ioctl.h erdma_compat.h erdma_compat.c
   erdma_ioctl.c erdma_main.c erdma_qp.c erdma_verbs.c
-  erdma_verbs.h erdma-abi.h erdma.h erdma_cmdq.c kcompat.h
+  erdma_verbs.h erdma.h erdma_cmdq.c kcompat.h
   erdma_stats.h erdma_stats.c erdma_debugfs.c erdma_cmd.c
+  erdma_devx.c erdma_devx.h
   )
-
 
 list(APPEND erdma_sources
   compat/sw.h compat/sw_hw_counters.h compat/sw_net.h compat/sw_param.h compat/sw_queue.h compat/sw_verbs.h
@@ -26,6 +26,15 @@ configure_file(ofa.mk ofa.mk COPYONLY)
 foreach(src ${erdma_sources})
   configure_file(${src} ${src} COPYONLY)
 endforeach()
+
+include(${CMAKE_SOURCE_DIR}/config/common.cmake)
+include(${CMAKE_SOURCE_DIR}/config/ksrc_check.cmake)
+
+if (HAVE_IB_USER_IOCTL_CMDS_H)
+  configure_file(erdma-abi.h erdma-abi.h COPYONLY)
+else()
+  configure_file(erdma-abi-compat.h.in erdma-abi.h COPYONLY)
+endif()
 
 # Generate config.h
 include(${CMAKE_SOURCE_DIR}/config/erdma.cmake)

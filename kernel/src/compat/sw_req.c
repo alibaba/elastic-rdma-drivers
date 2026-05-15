@@ -169,6 +169,8 @@ static int next_opcode(struct sw_qp *qp, struct sw_send_wqe *wqe,
 {
 	switch (qp_type(qp)) {
 	case IB_QPT_GSI:
+	case IB_QPT_SMI:
+	case IB_QPT_UD:
 		switch (opcode) {
 		case IB_WR_SEND:
 			return IB_OPCODE_UD_SEND_ONLY;

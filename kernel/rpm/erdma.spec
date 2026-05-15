@@ -5,15 +5,21 @@
 
 Name:		%{name}
 Version:	%{driver_version}
-Release:	8%{?dist}
+Release:	3%{?dist}
 Summary:	%{name} kernel module
 
 Group:		System/Kernel
 License:	Dual BSD/GPL
-URL:		https://need-to-fix.com
+URL:		https://help.aliyun.com/zh/ecs/user-guide/elastic-rdma-erdma
 Source0:	%{name}-%{version}.tar
 
+%if 0%{?alinux} >= 4
+# alinux4 does not have kernel-rpm-macros
+Requires:	dkms kernel-devel elfutils-libelf-devel kmod cmake
+%else
 Requires:	dkms %kernel_module_package_buildreqs cmake
+%endif
+
 # RHEL 8.4 has a broken dependency between cmake and libarchive which
 # causes libarchive to not be updated properly in the update case. Express the
 # dependency so that our install does not break.
@@ -63,6 +69,8 @@ install -m 644 config/Makefile			%{buildroot}%{install_path}/config
 install -m 644 config/main.c.in			%{buildroot}%{install_path}/config
 install -m 744 config/compile_conftest.sh	%{buildroot}%{install_path}/config
 install -m 644 config/erdma.cmake		%{buildroot}%{install_path}/config
+install -m 644 config/ksrc_check.cmake		%{buildroot}%{install_path}/config
+install -m 644 config/common.cmake		%{buildroot}%{install_path}/config
 install -m 744 config/runbg.sh			%{buildroot}%{install_path}/config
 install -m 744 config/wait_for_pid.sh		%{buildroot}%{install_path}/config
 cd src
@@ -84,6 +92,7 @@ install -m 644 erdma_cmd.c		%{buildroot}%{install_path}/src
 install -m 644 erdma_verbs.c		%{buildroot}%{install_path}/src
 install -m 644 erdma_verbs.h		%{buildroot}%{install_path}/src
 install -m 644 erdma-abi.h		%{buildroot}%{install_path}/src
+install -m 644 erdma-abi-compat.h.in	%{buildroot}%{install_path}/src
 install -m 644 kcompat.h		%{buildroot}%{install_path}/src
 install -m 644 CMakeLists.txt		%{buildroot}%{install_path}/src
 install -m 644 Kbuild.in		%{buildroot}%{install_path}/src
@@ -91,8 +100,8 @@ install -m 644 ofa.mk			%{buildroot}%{install_path}/src
 
 install -m 644 erdma_compat.c		%{buildroot}%{install_path}/src
 install -m 644 erdma_compat.h		%{buildroot}%{install_path}/src
-install -m 644 erdma_verbs.c		%{buildroot}%{install_path}/src
-install -m 644 erdma_verbs.h		%{buildroot}%{install_path}/src
+install -m 644 erdma_devx.c		%{buildroot}%{install_path}/src
+install -m 644 erdma_devx.h		%{buildroot}%{install_path}/src
 install -m 644 compat/rdma_user_sw.h	%{buildroot}%{install_path}/src/compat
 install -m 644 compat/sw.h		%{buildroot}%{install_path}/src/compat
 install -m 644 compat/sw_av.c		%{buildroot}%{install_path}/src/compat
@@ -130,6 +139,11 @@ install -m 644 compat/sw_verbs.h	%{buildroot}%{install_path}/src/compat
 /etc/modprobe.d/erdma.conf
 
 %changelog
+* Wed Jul 9 2025 Boshi Yu <boshiyu@linux.alibaba.com> - 1.2.0
+- Bump to version 0.2.39
+- Get details from RELEASENOTES.md if needed
+- Add alinux 4 support
+
 * Tue Sep 10 2024 Cheng Xu <chengyou@linux.alibaba.com> - 1.1.0
 - Bump to version 0.2.38
 - Get details from RELEASENOTES.md if needed.

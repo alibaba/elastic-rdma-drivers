@@ -6,14 +6,15 @@
 #include <rdma/ib_mad.h>
 #include <rdma/uverbs_ioctl.h>
 
+#include "erdma-abi.h"
 #include "erdma_verbs.h"
 
 #include <linux/netdevice.h>
 #include <net/netns/generic.h>
 
 struct erdma_net {
-       struct list_head erdma_list;
-       struct socket *rsvd_sock[16];
+	struct list_head erdma_list;
+	struct socket *rsvd_sock[16];
 };
 
 static unsigned int erdma_net_id;
@@ -44,24 +45,44 @@ module_param(use_zeronet, bool, 0444);
 MODULE_PARM_DESC(use_zeronet, "can use zeronet");
 #endif
 
+static unsigned int port_select_rule = 0;
+module_param(port_select_rule, uint, 0644);
+MODULE_PARM_DESC(port_select_rule,
+		 "0: IP & QPN involved; 1: Only QPN involved");
+
 #include "compat/sw.h"
 #include "compat/sw_loc.h"
 #include "compat/sw_queue.h"
 #include "compat/sw_hw_counters.h"
 
-int erdma_create_mad_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init,
-			struct ib_udata *udata)
+static void erdma_alloc_gsi_mr_idx(struct ib_qp *ibqp)
+{
+	struct erdma_dev *dev = to_edev(ibqp->device);
+	struct erdma_pd *pd = to_epd(ibqp->pd);
+	struct sw_mem *sw_mr = to_rmr(pd->sw_pd->internal_mr);
+	struct erdma_resource_cb *res_cb =
+		&dev->res_cb[ERDMA_RES_TYPE_STAG_IDX];
+	unsigned long flags;
+	u32 idx;
+
+	spin_lock_irqsave(&res_cb->lock, flags);
+	idx = sw_mr->pelem.index - sw_mr->pelem.pool->min_index;
+	set_bit(idx, res_cb->bitmap);
+	spin_unlock_irqrestore(&res_cb->lock, flags);
+}
+
+int erdma_create_ud_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init,
+		       struct ib_udata *udata)
 {
 	struct erdma_dev *dev = to_edev(ibqp->device);
 	struct erdma_cq *scq = to_ecq(init->send_cq);
 	struct erdma_cq *rcq = to_ecq(init->recv_cq);
 	struct erdma_qp *qp = to_eqp(ibqp);
+	struct erdma_uresp_create_qp uresp;
 	struct sw_dev *sw = &dev->sw_dev;
+	struct erdma_ucontext *uctx;
 	struct sw_qp *sw_qp;
 	int err;
-
-	if (udata)
-		return -EINVAL;
 
 	err = sw_qp_chk_init(sw, init);
 	if (err)
@@ -72,6 +93,14 @@ int erdma_create_mad_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init,
 		err = -ENOMEM;
 		goto err1;
 	}
+
+#ifdef HAVE_UDATA_TO_DRV_CONTEXT
+	uctx = rdma_udata_to_drv_context(udata, struct erdma_ucontext,
+					 ibucontext);
+#else
+	uctx = ibqp->pd->uobject ? to_ectx(ibqp->pd->uobject->context) : NULL;
+#endif
+
 	kref_init(&sw_qp->pelem.ref_cnt);
 	memcpy(&sw_qp->ibqp, &qp->ibqp, sizeof(qp->ibqp));
 
@@ -81,9 +110,31 @@ int erdma_create_mad_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init,
 	sw_qp->master = qp;
 	sw_qp->ibqp.device = &sw->ib_dev;
 
-	err = sw_qp_from_init(sw, sw_qp, init, NULL, qp->ibqp.pd, NULL);
+	err = sw_qp_from_init(sw, sw_qp, init, NULL, qp->ibqp.pd, udata,
+			      &uctx->ibucontext);
 	if (err)
 		goto err2;
+
+	/* Currently, GSI is created from kernel space.
+	 * We will create a local_dma_mr for the GSI in the sw
+	 * domain. We should set corresponding resource index in
+	 * erdma domain in case that someone tries to allocate
+	 * the used index when it calls erdma_reg_user_mr.
+	 */
+	if (init->qp_type == IB_QPT_GSI)
+		erdma_alloc_gsi_mr_idx(ibqp);
+
+	qp->attrs.max_send_sge = init->cap.max_send_sge;
+	qp->attrs.max_recv_sge = init->cap.max_recv_sge;
+
+	if (udata) {
+		memset(&uresp, 0, sizeof(uresp));
+		uresp.qp_id = QP_ID(qp);
+
+		err = ib_copy_to_udata(udata, &uresp, sizeof(uresp));
+		if (err)
+			goto err2;
+	}
 
 	return 0;
 
@@ -184,6 +235,12 @@ int attach_sw_dev(struct erdma_dev *dev)
 	}
 	sw->tfm = tfm;
 
+#ifdef HAVE_DEV_PARENT
+	sw->ib_dev.dma_device = dev->ibdev.dev.parent;
+#else
+	sw->ib_dev.dma_device = dev->ibdev.dma_device;
+#endif
+
 	return 0;
 }
 
@@ -193,6 +250,38 @@ void detach_sw_dev(struct erdma_dev *dev)
 		return;
 
 	sw_dealloc(&dev->sw_dev);
+}
+
+int attach_sw_mr(struct erdma_pd *pd, struct erdma_mr *emr,
+		 struct ib_udata *udata, struct ib_ucontext *uctx)
+{
+	struct sw_dev *sw = to_rdev(pd->sw_pd->ibpd.device);
+	struct ib_mr *ibmr;
+	struct sw_mem *mr;
+
+	if (emr->sw_mr)
+		return 0;
+
+	ibmr = sw_reg_user_mr(&pd->sw_pd->ibpd, emr->mem.start, emr->mem.len,
+			      emr->mem.va, to_ib_access_flags(emr->access),
+			      udata, uctx, emr->ibmr.lkey);
+	if (IS_ERR(ibmr))
+		return PTR_ERR(ibmr);
+
+	mr = to_rmr(ibmr);
+	ibmr->device = &sw->ib_dev;
+	ibmr->lkey = emr->ibmr.lkey;
+	ibmr->rkey = emr->ibmr.rkey;
+	ibmr->uobject = emr->ibmr.uobject;
+	emr->sw_mr = mr;
+
+	return 0;
+}
+
+void detach_sw_mr(struct erdma_mr *emr, struct ib_udata *udata)
+{
+	sw_dereg_mr(&emr->sw_mr->ibmr, udata);
+	emr->sw_mr = NULL;
 }
 
 int erdma_create_ah(struct ib_ah *ibah,
@@ -205,6 +294,7 @@ int erdma_create_ah(struct ib_ah *ibah,
 {
 	if (!compat_mode)
 		return -EOPNOTSUPP;
+
 #ifdef HAVE_CREATE_AH_RDMA_INIT_ATTR
 	return sw_create_ah(ibah, init_attr->ah_attr, udata);
 #else
@@ -258,7 +348,7 @@ out_free:
 
 #ifdef HAVE_AH_CORE_ALLOCATION_DESTROY_RC
 int erdma_destroy_ah(struct ib_ah *ibah, u32 flags)
-#elif defined(HAVE_AH_CORE_ALLOCATION) && defined (HAVE_DESTROY_AH_VOID)
+#elif defined(HAVE_AH_CORE_ALLOCATION) && defined(HAVE_DESTROY_AH_VOID)
 void erdma_destroy_ah(struct ib_ah *ibah, u32 flags)
 #elif defined(HAVE_DESTROY_AH_FLAGS)
 int erdma_destroy_ah(struct ib_ah *ibah, u32 flags)
@@ -269,7 +359,7 @@ int erdma_destroy_ah(struct ib_ah *ibah)
 	struct sw_ah *ah = to_rah(ibah);
 
 	if (!compat_mode)
-#if defined(HAVE_AH_CORE_ALLOCATION) && defined (HAVE_DESTROY_AH_VOID) &&                  \
+#if defined(HAVE_AH_CORE_ALLOCATION) && defined(HAVE_DESTROY_AH_VOID) && \
 	!defined(HAVE_AH_CORE_ALLOCATION_DESTROY_RC)
 		return;
 #else
@@ -278,7 +368,7 @@ int erdma_destroy_ah(struct ib_ah *ibah)
 
 	sw_drop_ref(ah);
 
-#if defined(HAVE_AH_CORE_ALLOCATION) && defined (HAVE_DESTROY_AH_VOID) &&                  \
+#if defined(HAVE_AH_CORE_ALLOCATION) && defined(HAVE_DESTROY_AH_VOID) && \
 	!defined(HAVE_AH_CORE_ALLOCATION_DESTROY_RC)
 	return;
 #else
@@ -328,11 +418,13 @@ void erdma_gen_port_from_qpn(u32 sip, u32 dip, u32 lqpn, u32 rqpn, u16 *sport,
 	/* select lqpn 0, select rqpn 1 */
 	u32 select_type = 1;
 
-	lqpn &= 0xFFFFF;
-	rqpn &= 0xFFFFF;
-
-	if (dip < sip || (dip == sip && lqpn < rqpn))
-		select_type = 0;
+	if (!port_select_rule) {
+		if (dip < sip || (dip == sip && lqpn < rqpn))
+			select_type = 0;
+	} else {
+		if (lqpn < rqpn)
+			select_type = 0;
+	}
 
 	if (select_type) {
 		*sport = reserve_ports_base + upper_16_bits(rqpn);
@@ -366,8 +458,8 @@ static int erdma_av_from_attr(struct erdma_qp *qp, struct ib_qp_attr *attr)
 	ntype = rdma_gid_attr_network_type(sgid_attr);
 	sgid = sgid_attr->gid;
 #else
-	err = ib_get_sgid_attr(&qp->dev->ibdev, ah_attr, &sgid,
-			       &sgid_attr, &ntype);
+	err = ib_get_sgid_attr(&qp->dev->ibdev, ah_attr, &sgid, &sgid_attr,
+			       &ntype);
 	if (err)
 		return err;
 #endif
@@ -378,6 +470,16 @@ static int erdma_av_from_attr(struct erdma_qp *qp, struct ib_qp_attr *attr)
 	rdma_gid2ip((struct sockaddr *)&qp->attrs.laddr, &sgid);
 	rdma_gid2ip((struct sockaddr *)&qp->attrs.raddr,
 		    &rdma_ah_read_grh(ah_attr)->dgid);
+
+	if (qp->attrs.laddr.in6.sin6_family == AF_INET6 &&
+	    ipv6_addr_type(&qp->attrs.laddr.in6.sin6_addr) &
+		    IPV6_ADDR_LINKLOCAL)
+		return -EINVAL;
+
+	if (qp->attrs.raddr.in6.sin6_family == AF_INET6 &&
+	    ipv6_addr_type(&qp->attrs.raddr.in6.sin6_addr) &
+		    IPV6_ADDR_LINKLOCAL)
+		return -EINVAL;
 
 	ibdev_dbg(&qp->dev->ibdev, "dgid: %pI6\n",
 		  rdma_ah_read_grh(ah_attr)->dgid.raw);
@@ -393,11 +495,16 @@ static int erdma_av_from_attr(struct erdma_qp *qp, struct ib_qp_attr *attr)
 int erdma_handle_compat_attr(struct erdma_qp *qp, struct ib_qp_attr *attr,
 			     int attr_mask)
 {
+	int ret;
+
 	ibdev_dbg(&qp->dev->ibdev, "attr mask: %x, av: %d, state:%d\n",
 		  attr_mask, attr_mask & IB_QP_AV, attr_mask & IB_QP_STATE);
 
-	if (attr_mask & IB_QP_AV)
-		erdma_av_from_attr(qp, attr);
+	if (attr_mask & IB_QP_AV) {
+		ret = erdma_av_from_attr(qp, attr);
+		if (ret)
+			return ret;
+	}
 
 	if (attr_mask & IB_QP_DEST_QPN) {
 		ibdev_dbg(&qp->dev->ibdev, "get remote qpn %u\n",
@@ -424,8 +531,8 @@ static int erdma_port_init(struct net *net, struct socket **rsvd_sock)
 	int ret = 0, i, j;
 
 	for (i = 0; i < 16; i++) {
-		ret = __sock_create(net, AF_INET,
-				    SOCK_STREAM, IPPROTO_TCP, &rsvd_sock[i], 1);
+		ret = __sock_create(net, AF_INET, SOCK_STREAM, IPPROTO_TCP,
+				    &rsvd_sock[i], 1);
 		if (ret < 0)
 			goto err_out;
 		memset(&laddr, 0, sizeof(struct sockaddr_in));
@@ -484,7 +591,7 @@ static void __net_exit erdma_exit_batch_net(struct list_head *net_list)
 static struct pernet_operations erdma_net_ops = {
 	.init = erdma_init_net,
 	.exit_batch = erdma_exit_batch_net,
-	.id   = &erdma_net_id,
+	.id = &erdma_net_id,
 	.size = sizeof(struct erdma_net),
 };
 

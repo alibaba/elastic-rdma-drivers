@@ -9,7 +9,7 @@
 export DH_VERBOSE = 1
 
 NAME	= erdma
-VERSION = 1.1.0
+VERSION = 1.2.0
 DESTDIR:=`pwd`/debian/${NAME}
 INSTALL_PATH = /usr/src/${NAME}-${VERSION}
 
@@ -41,6 +41,8 @@ override_dh_auto_install:
 	install -m 644 config/main.c.in			${DESTDIR}/${INSTALL_PATH}/config
 	install -m 744 config/compile_conftest.sh	${DESTDIR}/${INSTALL_PATH}/config
 	install -m 644 config/erdma.cmake		${DESTDIR}/${INSTALL_PATH}/config
+	install -m 644 config/common.cmake		${DESTDIR}/${INSTALL_PATH}/config
+	install -m 644 config/ksrc_check.cmake		${DESTDIR}/${INSTALL_PATH}/config
 	install -m 744 config/runbg.sh			${DESTDIR}/${INSTALL_PATH}/config
 	install -m 744 config/wait_for_pid.sh		${DESTDIR}/${INSTALL_PATH}/config
 	
@@ -62,16 +64,17 @@ override_dh_auto_install:
 	install -m 644 src/erdma_verbs.c		${DESTDIR}/${INSTALL_PATH}/src
 	install -m 644 src/erdma_verbs.h		${DESTDIR}/${INSTALL_PATH}/src
 	install -m 644 src/erdma-abi.h			${DESTDIR}/${INSTALL_PATH}/src
+	install -m 644 src/erdma-abi-compat.h.in	${DESTDIR}/${INSTALL_PATH}/src
 	install -m 644 src/kcompat.h			${DESTDIR}/${INSTALL_PATH}/src
 	
 	install -m 644 src/CMakeLists.txt		${DESTDIR}/${INSTALL_PATH}/src
 	install -m 644 src/Kbuild.in			${DESTDIR}/${INSTALL_PATH}/src
 	install -m 644 src/ofa.mk			${DESTDIR}/${INSTALL_PATH}/src
 
-	install -m 644 src/erdma_compat.c			${DESTDIR}/${INSTALL_PATH}/src
-	install -m 644 src/erdma_compat.h			${DESTDIR}/${INSTALL_PATH}/src
-	install -m 644 src/erdma_verbs.c		${DESTDIR}/${INSTALL_PATH}/src
-	install -m 644 src/erdma_verbs.h		${DESTDIR}/${INSTALL_PATH}/src
+	install -m 644 src/erdma_compat.c		${DESTDIR}/${INSTALL_PATH}/src
+	install -m 644 src/erdma_compat.h		${DESTDIR}/${INSTALL_PATH}/src
+	install -m 644 src/erdma_devx.c			${DESTDIR}/${INSTALL_PATH}/src
+	install -m 644 src/erdma_devx.h			${DESTDIR}/${INSTALL_PATH}/src
 	install -m 644 src/compat/rdma_user_sw.h	${DESTDIR}/${INSTALL_PATH}/src/compat
 	install -m 644 src/compat/sw.h			${DESTDIR}/${INSTALL_PATH}/src/compat
 	install -m 644 src/compat/sw_av.c		${DESTDIR}/${INSTALL_PATH}/src/compat

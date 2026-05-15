@@ -128,6 +128,43 @@ struct ib_device *ib_device_get_by_netdev(struct net_device *ndev,
 }
 #endif
 
+struct erdma_dev *erdma_device_get_by_dgid(union ib_gid *dgid)
+{
+	struct erdma_dev *found = NULL;
+	struct erdma_dev *edev;
+#ifdef HAVE_RDMA_FIND_GID_BY_PORT
+	const struct ib_gid_attr *gid_attr;
+#else
+	int ret;
+#endif
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(edev, &dev_list, dev_list) {
+#ifdef HAVE_RDMA_FIND_GID_BY_PORT
+		gid_attr = rdma_find_gid_by_port(&edev->ibdev, dgid,
+						 IB_GID_TYPE_ROCE_UDP_ENCAP, 1,
+						 edev->netdev);
+		if (!IS_ERR(gid_attr)) {
+			found = edev;
+			break;
+		}
+#else
+		ret = ib_find_cached_gid_by_port(&edev->ibdev, dgid,
+						 IB_GID_TYPE_ROCE_UDP_ENCAP, 1,
+						 edev->netdev, NULL);
+		if (!ret) {
+			found = edev;
+			break;
+		}
+#endif
+	}
+
+	rcu_read_unlock();
+
+	return found;
+}
+
 #ifndef HAVE_NET_RWSEM
 /* Provide dummmy net_rwsem */
 DECLARE_RWSEM(net_rwsem);
@@ -466,11 +503,18 @@ static void erdma_comm_irq_uninit(struct erdma_dev *dev)
 
 static int erdma_hw_resp_pool_init(struct erdma_dev *dev)
 {
-	dev->resp_pool =
-		dma_pool_create("erdma_resp_pool", &dev->pdev->dev,
-				ERDMA_HW_RESP_SIZE, ERDMA_HW_RESP_SIZE, 0);
+	dev->resp_pool = dma_pool_create("erdma_resp_pool", &dev->pdev->dev,
+					 ERDMA_HW_RESP_SIZE, ERDMA_HW_RESP_SIZE,
+					 0);
 	if (!dev->resp_pool)
 		return -ENOMEM;
+
+	dev->db_pool = dma_pool_create("erdma_db", &dev->pdev->dev,
+				       ERDMA_DB_SIZE, ERDMA_DB_SIZE, 0);
+	if (!dev->db_pool) {
+		dma_pool_destroy(dev->resp_pool);
+		return -ENOMEM;
+	}
 
 	return 0;
 }
@@ -478,6 +522,7 @@ static int erdma_hw_resp_pool_init(struct erdma_dev *dev)
 static void erdma_hw_resp_pool_destroy(struct erdma_dev *dev)
 {
 	dma_pool_destroy(dev->resp_pool);
+	dma_pool_destroy(dev->db_pool);
 }
 
 static int erdma_device_init(struct erdma_dev *dev, struct pci_dev *pdev)
@@ -495,7 +540,13 @@ static int erdma_device_init(struct erdma_dev *dev, struct pci_dev *pdev)
 	if (ret)
 		goto destroy_pool;
 
-	dma_set_max_seg_size(&pdev->dev, UINT_MAX);
+	/* Do not allow the single SGL exceed 2G Bytes to avoid extra small
+	 * page size (4K) when register large physical continuous memory
+	 * (typcally >= 4G Bytes).
+	 * More information, please refer:
+	 * https://lore.kernel.org/all/20250209142608.21230-1-mrgolin@amazon.com/
+	 */
+	dma_set_max_seg_size(&pdev->dev, SZ_2G);
 
 	return 0;
 
@@ -671,7 +722,7 @@ err_uninit_cmdq:
 	erdma_cmdq_destroy(dev);
 
 err_uninit_aeq:
-	erdma_aeq_destroy(dev);
+	erdma_eq_destroy(dev, &dev->aeq);
 
 err_uninit_comm_irq:
 	erdma_comm_irq_uninit(dev);
@@ -708,7 +759,7 @@ static void erdma_remove_dev(struct pci_dev *pdev)
 	erdma_ceqs_uninit(dev);
 	erdma_hw_stop(dev, false);
 	erdma_cmdq_destroy(dev);
-	erdma_aeq_destroy(dev);
+	erdma_eq_destroy(dev, &dev->aeq);
 	erdma_comm_irq_uninit(dev);
 #ifdef HAVE_NO_PCI_IRQ_NEW_API
 	pci_disable_msix(dev->pdev);
@@ -777,6 +828,8 @@ static int erdma_dev_attrs_init(struct erdma_dev *dev)
 	dev->attrs.max_recv_sge = ERDMA_MAX_RECV_SGE;
 	dev->attrs.max_sge_rd = ERDMA_MAX_SGE_RD;
 	dev->attrs.max_pd = ERDMA_MAX_PD;
+	dev->attrs.max_umem = ERDMA_MAX_UMEM;
+	dev->attrs.max_mtte = ERDMA_NMTTE_PER_QBLOCK * ERDMA_GET_CAP(QBLOCK, cap1);
 
 	dev->res_cb[ERDMA_RES_TYPE_PD].max_cap = ERDMA_MAX_PD;
 	dev->res_cb[ERDMA_RES_TYPE_STAG_IDX].max_cap = dev->attrs.max_mr;
@@ -850,9 +903,7 @@ static const struct ib_device_ops erdma_device_ops = {
 	.dereg_mr = erdma_dereg_mr,
 	.destroy_cq = erdma_destroy_cq,
 	.destroy_qp = erdma_destroy_qp,
-#if defined(HAVE_IWARP_OUTBOUND_QP_CREATE_FOR_SMC) || defined(ENABLE_COMPAT_MODE)
 	.disassociate_ucontext = erdma_disassociate_ucontext,
-#endif
 	.get_dma_mr = erdma_get_dma_mr,
 #if defined(HAVE_SINGLE_HW_STATS) || defined(HAVE_SPLIT_STATS_ALLOC)
 	.get_hw_stats = erdma_get_hw_stats,
@@ -884,7 +935,13 @@ static const struct ib_device_ops erdma_device_ops = {
 	.get_netdev = erdma_get_netdev,
 	.query_pkey = erdma_query_pkey,
 	.modify_cq = erdma_modify_cq,
+#ifdef HAVE_CREATE_USER_AH
+	.create_user_ah = erdma_create_ah,
+#endif
 	.create_ah = erdma_create_ah,
+#ifdef HAVE_CREATE_USER_AH
+	.create_user_ah = erdma_create_ah,
+#endif
 	.destroy_ah = erdma_destroy_ah,
 	INIT_RDMA_OBJ_SIZE(ib_ah, sw_ah, ibah),
 #ifdef HAVE_GET_VECTOR_AFFINITY
@@ -967,6 +1024,13 @@ static void erdma_ibverbs_init(struct ib_device *ibdev)
 }
 #endif
 
+#ifdef HAVE_UAPI_DEF_SUPPORT
+static const struct uapi_definition erdma_defs[] = {
+	UAPI_DEF_CHAIN(erdma_devx_defs),
+	{}
+};
+#endif
+
 static int erdma_ib_device_add(struct pci_dev *pdev)
 {
 	struct erdma_dev *dev = pci_get_drvdata(pdev);
@@ -981,7 +1045,6 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 	if (ret)
 		return ret;
 
-#ifndef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
 	ibdev->uverbs_cmd_mask |=
 		(1ull << IB_USER_VERBS_CMD_GET_CONTEXT) |
 		(1ull << IB_USER_VERBS_CMD_QUERY_DEVICE) |
@@ -997,10 +1060,18 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 		(1ull << IB_USER_VERBS_CMD_QUERY_QP) |
 		(1ull << IB_USER_VERBS_CMD_MODIFY_QP) |
 		(1ull << IB_USER_VERBS_CMD_DESTROY_QP);
-#endif
 
-	if (compat_mode)
+	if (compat_mode) {
+		ibdev->uverbs_cmd_mask |=
+			(1ull << IB_USER_VERBS_CMD_POST_RECV) |
+			(1ull << IB_USER_VERBS_CMD_POST_SEND) |
+			(1ull << IB_USER_VERBS_CMD_POLL_CQ) |
+			(1ull << IB_USER_VERBS_CMD_CREATE_AH) |
+			(1ull << IB_USER_VERBS_CMD_DESTROY_AH) |
+			(1ull << IB_USER_VERBS_CMD_REQ_NOTIFY_CQ);
+
 		ibdev->node_type = RDMA_NODE_IB_CA;
+	}
 	else
 		ibdev->node_type = RDMA_NODE_RNIC;
 	memcpy(ibdev->node_desc, ERDMA_NODE_DESC, sizeof(ERDMA_NODE_DESC));
@@ -1030,19 +1101,27 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 	erdma_ibverbs_init(ibdev);
 #endif
 
+#ifdef HAVE_UAPI_DEF_SUPPORT
+	ibdev->driver_def = erdma_defs;
+#endif
+
 	INIT_LIST_HEAD(&dev->cep_list);
 
 	spin_lock_init(&dev->lock);
 #ifdef HAVE_XARRAY_API
 	xa_init_flags(&dev->qp_xa, XA_FLAGS_ALLOC1);
 	xa_init_flags(&dev->cq_xa, XA_FLAGS_ALLOC1);
+	xa_init_flags(&dev->umem_xa, XA_FLAGS_ALLOC1);
 #else
 	spin_lock_init(&dev->idr_lock);
 	idr_init(&dev->qp_idr);
 	idr_init(&dev->cq_idr);
+	idr_init(&dev->umem_idr);
 #endif
 	dev->next_alloc_cqn = 1;
 	dev->next_alloc_qpn = 1;
+	dev->next_alloc_umem_id = 1;
+
 	if (rand_qpn) {
 		get_random_bytes(&tmp_idx, sizeof(u32));
 		dev->next_alloc_qpn = tmp_idx % dev->attrs.max_qp;
@@ -1063,6 +1142,7 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 	bitmap_zero(dev->sdb_entry, ERDMA_DWQE_TYPE1_CNT);
 
 	atomic_set(&dev->num_ctx, 0);
+	atomic_set(&dev->num_mtte, 0);
 
 	mac = erdma_reg_read32(dev, ERDMA_REGS_NETDEV_MAC_L_REG);
 	mac |= (u64)erdma_reg_read32(dev, ERDMA_REGS_NETDEV_MAC_H_REG) << 32;
@@ -1071,18 +1151,11 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 
 	u64_to_ether_addr(mac, dev->attrs.peer_addr);
 
-	dev->db_pool = dma_pool_create("erdma_db", &pdev->dev, ERDMA_DB_SIZE,
-				       ERDMA_DB_SIZE, 0);
-	if (!dev->db_pool) {
-		ret = -ENOMEM;
-		goto err_out;
-	}
-
 	dev->reflush_wq = alloc_workqueue("erdma-reflush-wq", WQ_UNBOUND,
 					  WQ_UNBOUND_MAX_ACTIVE);
 	if (!dev->reflush_wq) {
 		ret = -ENOMEM;
-		goto free_pool;
+		goto err_out;
 	}
 
 	ret = erdma_device_register(dev);
@@ -1103,8 +1176,6 @@ device_unregister:
 	erdma_device_unregister(dev);
 free_wq:
 	destroy_workqueue(dev->reflush_wq);
-free_pool:
-	dma_pool_destroy(dev->db_pool);
 err_out:
 #ifndef HAVE_IB_DEV_OPS
 	kfree(ibdev->iwcm);
@@ -1113,9 +1184,11 @@ err_out:
 #ifdef HAVE_XARRAY_API
 	xa_destroy(&dev->qp_xa);
 	xa_destroy(&dev->cq_xa);
+	xa_destroy(&dev->umem_xa);
 #else
 	idr_destroy(&dev->qp_idr);
 	idr_destroy(&dev->cq_idr);
+	idr_destroy(&dev->umem_idr);
 #endif
 
 	erdma_res_cb_free(dev);
@@ -1132,6 +1205,7 @@ static void erdma_ib_device_remove(struct pci_dev *pdev)
 
 	WARN_ON(atomic_read(&dev->num_ctx));
 	WARN_ON(atomic_read(&dev->num_cep));
+	WARN_ON(atomic_read(&dev->num_mtte));
 	WARN_ON(!list_empty(&dev->cep_list));
 
 #ifndef HAVE_IB_DEV_OPS
@@ -1141,11 +1215,12 @@ static void erdma_ib_device_remove(struct pci_dev *pdev)
 #ifdef HAVE_XARRAY_API
 	xa_destroy(&dev->qp_xa);
 	xa_destroy(&dev->cq_xa);
+	xa_destroy(&dev->umem_xa);
 #else
 	idr_destroy(&dev->qp_idr);
 	idr_destroy(&dev->cq_idr);
+	idr_destroy(&dev->umem_idr);
 #endif
-	dma_pool_destroy(dev->db_pool);
 	destroy_workqueue(dev->reflush_wq);
 	if (compat_mode)
 		detach_sw_dev(dev);

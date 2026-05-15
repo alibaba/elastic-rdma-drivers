@@ -2,7 +2,7 @@
 
 NAME = erdma
 SPEC = $(NAME).spec
-VERSION = 1.1.0
+VERSION = 1.2.0
 
 TOPDIR  := $(shell git rev-parse --show-toplevel)
 TAG	?= HEAD
@@ -18,7 +18,7 @@ RPMDEFS = --define '_topdir  %(pwd)' \
           --define '_srcrpmdir %{_ntopdir}' \
 	  --define "driver_version $(VERSION)"
 
-all : rpm
+all : rpm srpm
 
 tarball : $(TARBALL)
 $(TARBALL) : always
@@ -26,13 +26,13 @@ $(TARBALL) : always
 	git archive --format=tar --prefix=$(NAME)-$(VERSION)/ $(TAG) ) > $@
 
 srpm : $(TARBALL) Makefile
-	rpmbuild -bs $(RPMDEFS) $(SPEC)
+	rpmbuild -bs --define 'dist %{nil}' $(RPMDEFS) $(SPEC)
 
 rpm : $(TARBALL) Makefile
-	rpmbuild -ba $(RPMDEFS) $(SPEC)
+	rpmbuild -bb $(RPMDEFS) $(SPEC)
 
 clean :
-	rm -f $(TARBALL) *.src.rpm
+	rm -rf $(TARBALL) *.src.rpm build x86_64 aarch64
 
 always:
 

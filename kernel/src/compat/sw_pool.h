@@ -106,6 +106,8 @@ int sw_add_to_pool(struct sw_pool *pool, struct sw_pool_entry *elem);
  */
 void sw_add_index(void *elem);
 
+int sw_alloc_index(void *arg, u32 index);
+
 /* drop an index and remove object from rb tree */
 void sw_drop_index(void *elem);
 

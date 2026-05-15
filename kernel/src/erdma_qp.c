@@ -175,9 +175,9 @@ static int erdma_modify_qp_state_to_rts_compat(struct erdma_qp *qp,
 	req.cfg = FIELD_PREP(ERDMA_CMD_MODIFY_QP_STATE_MASK, qp->attrs.state) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_CC_MASK, qp->attrs.cc) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_QPN_MASK, QP_ID(qp));
-	req.cookie =
-		FIELD_PREP(ERDMA_CMD_MODIFY_QP_RQPN_MASK, qp->attrs.remote_qp_num) |
-		FIELD_PREP(ERDMA_CMD_MODIFY_QP_TLP_MASK, 1);
+	req.cookie = FIELD_PREP(ERDMA_CMD_MODIFY_QP_RQPN_MASK,
+				(qp->attrs.remote_qp_num & 0x1FFFF)) |
+		     FIELD_PREP(ERDMA_CMD_MODIFY_QP_TLP_MASK, 1);
 
 	if (((struct sockaddr_in *)&qp->attrs.raddr)->sin_family == AF_INET) {
 		req.dip = qp->attrs.raddr.in.sin_addr.s_addr;
@@ -193,7 +193,7 @@ static int erdma_modify_qp_state_to_rts_compat(struct erdma_qp *qp,
 		return -EAFNOSUPPORT;
 	}
 
-	erdma_gen_port_from_qpn(req.sip, req.dip, QP_ID(qp),
+	erdma_gen_port_from_qpn(req.sip, req.dip, qp->ibqp.qp_num,
 				qp->attrs.remote_qp_num, &req.sport,
 				&req.dport);
 	req.sport = htons(req.sport);
@@ -229,8 +229,8 @@ static int erdma_modify_qp_state_to_stop(struct erdma_qp *qp,
 int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 			     enum erdma_qp_attr_mask mask)
 {
-	int drop_conn, ret = 0;
 	bool need_reflush = false;
+	int drop_conn, ret = 0;
 
 	if (!mask)
 		return 0;
@@ -275,7 +275,7 @@ int erdma_modify_qp_internal(struct erdma_qp *qp, struct erdma_qp_attrs *attrs,
 			if (!(qp->attrs.flags & ERDMA_QP_IN_DESTROY))
 				ret = erdma_modify_qp_state_to_stop(qp, attrs,
 								    mask);
-			/* We apply to kernel qp first. */
+				/* We apply to kernel qp first. */
 #ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
 			if (rdma_is_kernel_res(&qp->ibqp.res))
 #else
@@ -656,7 +656,8 @@ int erdma_post_send(struct ib_qp *ibqp, struct ib_send_wr *send_wr,
 	if (!send_wr)
 		return -EINVAL;
 
-	if (compat_mode && unlikely(ibqp->qp_type == IB_QPT_GSI))
+	if ((ibqp->qp_type == IB_QPT_GSI || ibqp->qp_type == IB_QPT_UD) &&
+	    compat_mode)
 		return erdma_post_send_mad(ibqp, send_wr, bad_send_wr);
 
 	spin_lock_irqsave(&qp->kern_qp.sq_lock, flags);
@@ -739,7 +740,8 @@ int erdma_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *recv_wr,
 	unsigned long flags;
 	int ret = 0;
 
-	if (compat_mode && unlikely(ibqp->qp_type == IB_QPT_GSI))
+	if ((ibqp->qp_type == IB_QPT_GSI || ibqp->qp_type == IB_QPT_UD) &&
+	    compat_mode)
 		return erdma_post_recv_mad(ibqp, recv_wr, bad_recv_wr);
 
 	spin_lock_irqsave(&qp->kern_qp.rq_lock, flags);

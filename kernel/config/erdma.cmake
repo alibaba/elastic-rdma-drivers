@@ -2,17 +2,10 @@
 # Copyright 2022 Alibaba.com, Inc.
 # Copyright 2021 Amazon.com, Inc. or its affiliates. All rights reserved.
 
+# include(${CMAKE_SOURCE_DIR}/config/common.cmake)
+
 function(config_define def)
   file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/config.h "#define ${def} 1\n")
-endfunction()
-
-function(set_conf_tmp_dir prologue body)
-  string(RANDOM rand)
-  set(tmp_dir "tmp_${rand}")
-  set(tmp_dir ${tmp_dir} PARENT_SCOPE)
-  configure_file(${CMAKE_SOURCE_DIR}/config/main.c.in ${tmp_dir}/main.c @ONLY)
-  configure_file(${CMAKE_SOURCE_DIR}/config/Makefile ${tmp_dir} COPYONLY)
-  configure_file(${CMAKE_SOURCE_DIR}/src/ofa.mk ${tmp_dir} COPYONLY)
 endfunction()
 
 function(try_compile_prog_test)
@@ -558,11 +551,18 @@ register_netdevice_notifier_rh(NULL);
 )
 
 
+try_compile("#include <net/addrconf.h>"
+  "
+addrconf_addr_eui48(NULL, NULL);
+  "
+  HAVE_ERDMA_ADDRCONF_ADDR_EUI48 ""
+)
+
 try_compile("#include <linux/etherdevice.h>"
   "
 u64_to_ether_addr(0, NULL);
   "
-  HAVE_ETHERDEVICE_HELPER ""
+  HAVE_ERDMA_U64_TO_ETHER_ADDR ""
 )
 
 try_compile("#include <rdma/ib_verbs.h>"
@@ -739,6 +739,28 @@ try_compile("#include <linux/device.h>
   test_class.devnode = test_devnode;
   "
   HAVE_CLASS_DEVNODE_WITH_CONST_DEV_PARAM "")
+
+try_compile("#include <linux/dma-direct.h>"
+  "
+  phys_addr_t paddr = dma_to_phys(NULL, 0);
+  "
+  HAVE_DMA_DIRECT_HEADER "")
+
+try_compile("#include <rdma/uverbs_ioctl.h>
+  #include <rdma/ib_umem.h>"
+  "
+  struct uapi_definition erdma_devx_defs;
+  erdma_devx_defs.kind = 0;
+  ib_umem_find_best_pgsz(NULL, 0, 0);
+  "
+  HAVE_UAPI_DEF_SUPPORT "")
+
+try_compile("#include <rdma/ib_verbs.h>"
+  "
+  int ret;
+  ret = ib_check_mr_access(NULL, 0);
+  "
+  HAVE_IB_CHECK_MR_ACCESS_TWO_PARAMS "")
 
 wait_for_pids()
 message("-- Inspecting kernel - done")

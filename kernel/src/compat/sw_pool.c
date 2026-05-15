@@ -96,6 +96,7 @@ static int sw_pool_init_index(struct sw_pool *pool, u32 max, u32 min)
 
 	pool->max_index = max;
 	pool->min_index = min;
+	pool->last = 0;
 
 	size = BITS_TO_LONGS(max - min + 1) * sizeof(long);
 	pool->table = kmalloc(size, GFP_KERNEL);
@@ -180,6 +181,31 @@ void sw_pool_cleanup(struct sw_pool *pool)
 	write_unlock_irqrestore(&pool->pool_lock, flags);
 
 	sw_pool_put(pool);
+}
+
+static void alloc_spec_index(struct sw_pool *pool, u32 index, int *res)
+{
+	u32 pos = index - pool->min_index;
+
+	if (index > pool->max_index || index < pool->min_index) {
+		pr_err("Invalid index %u\n", index);
+		*res = -EINVAL;
+		goto out;
+	}
+
+	/* allocated index */
+	if (test_bit(pos, pool->table)) {
+		pr_err("Allocated index %u\n", index);
+		*res = -EBUSY;
+		goto out;
+	}
+
+	set_bit(pos, pool->table);
+	pool->last = pos;
+
+	*res = 0;
+out:
+	return;
 }
 
 static u32 alloc_index(struct sw_pool *pool)
@@ -290,6 +316,24 @@ void sw_add_index(void *arg)
 	write_unlock_irqrestore(&pool->pool_lock, flags);
 }
 
+int sw_alloc_index(void *arg, u32 index)
+{
+	struct sw_pool_entry *elem = arg;
+	struct sw_pool *pool = elem->pool;
+	unsigned long flags;
+	int ret;
+
+	write_lock_irqsave(&pool->pool_lock, flags);
+	alloc_spec_index(pool, index, &ret);
+	if (ret)
+		return ret;
+
+	elem->index = index;
+	insert_index(pool, elem);
+	write_unlock_irqrestore(&pool->pool_lock, flags);
+	return 0;
+}
+
 void sw_drop_index(void *arg)
 {
 	struct sw_pool_entry *elem = arg;
@@ -340,6 +384,7 @@ out_cnt:
 int sw_add_to_pool(struct sw_pool *pool, struct sw_pool_entry *elem)
 {
 	unsigned long flags;
+	int ret = 0;
 
 	might_sleep_if(!(pool->flags & SW_POOL_ATOMIC));
 
@@ -351,8 +396,11 @@ int sw_add_to_pool(struct sw_pool *pool, struct sw_pool_entry *elem)
 	kref_get(&pool->ref_cnt);
 	read_unlock_irqrestore(&pool->pool_lock, flags);
 
-	if (atomic_inc_return(&pool->num_elem) > pool->max_elem)
+	if (atomic_inc_return(&pool->num_elem) > pool->max_elem) {
+		pr_warn("Resource exhausted!\n");
+		ret = -ENOSPC;
 		goto out_cnt;
+	}
 
 	elem->pool = pool;
 	kref_init(&elem->ref_cnt);
@@ -362,7 +410,7 @@ int sw_add_to_pool(struct sw_pool *pool, struct sw_pool_entry *elem)
 out_cnt:
 	atomic_dec(&pool->num_elem);
 	sw_pool_put(pool);
-	return -EINVAL;
+	return ret;
 }
 
 void sw_elem_release(struct kref *kref)

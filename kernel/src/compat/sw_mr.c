@@ -6,6 +6,11 @@
 
 #include "sw.h"
 #include "sw_loc.h"
+#ifdef HAVE_DMA_DIRECT_HEADER
+#include <linux/dma-direct.h>
+#else
+#include <linux/dma-mapping.h>
+#endif
 
 /*
  * lfsr (linear feedback shift register) with period 255
@@ -233,6 +238,7 @@ out:
 int sw_mem_copy(struct sw_mem *mem, u64 iova, void *addr, int length,
 		 enum copy_direction dir, u32 *crcp)
 {
+	struct sw_dev 		*sw = to_rdev(mem->ibmr.device);
 	int			err;
 	int			bytes;
 	u8			*va;
@@ -246,9 +252,12 @@ int sw_mem_copy(struct sw_mem *mem, u64 iova, void *addr, int length,
 	if (length == 0)
 		return 0;
 
-	iova = (u64)phys_to_virt(iova);
 	if (mem->type == SW_MEM_TYPE_DMA) {
+		phys_addr_t paddr;
 		u8 *src, *dest;
+
+		paddr = dma_to_phys(&sw->master->pdev->dev, (dma_addr_t)iova);
+		iova = (u64)phys_to_virt(paddr);
 
 		src  = (dir == to_mem_obj) ?
 			addr : ((void *)(uintptr_t)iova);
@@ -259,8 +268,7 @@ int sw_mem_copy(struct sw_mem *mem, u64 iova, void *addr, int length,
 		memcpy(dest, src, length);
 
 		if (crcp)
-			*crcp = sw_crc32(to_rdev(mem->ibmr.device),
-					*crcp, dest, length);
+			*crcp = sw_crc32(sw, *crcp, dest, length);
 
 		return 0;
 	}
@@ -350,6 +358,7 @@ int copy_data(
 	if (sge->length && (offset < sge->length)) {
 		mem = lookup_mem(pd, access, sge->lkey, lookup_local);
 		if (!mem) {
+			pr_warn("lookup_mem failed\n");
 			err = -EINVAL;
 			goto err1;
 		}
@@ -393,7 +402,6 @@ int copy_data(
 			err = sw_mem_copy(mem, iova, addr, bytes, dir, crcp);
 			if (err)
 				goto err2;
-
 			offset	+= bytes;
 			resid	-= bytes;
 			length	-= bytes;
@@ -456,28 +464,182 @@ int advance_dma_data(struct sw_dma_info *dma, unsigned int length)
  * (4) verify that mem state is valid
  */
 struct sw_mem *lookup_mem(struct sw_pd *pd, int access, u32 key,
-			   enum lookup_type type)
+			  enum lookup_type type)
 {
 	struct sw_mem *mem;
 	struct sw_dev *sw = to_rdev(pd->ibpd.device);
-	int index = key >> 8;
+	u32 index = (key >> 8) + sw->mr_pool.min_index;
 
 	if ((key & 0xffff0000) == 0x4ac00000) {
 		key = pd->ibpd.local_dma_lkey;
 		index = key >> 8;
 	}
+
 	mem = sw_pool_get_index(&sw->mr_pool, index);
-	if (!mem)
+	if (!mem) {
+		pr_warn("failed to look up MR#0x%x\n", index);
 		return NULL;
+	}
 
 	if (unlikely((type == lookup_local && mr_lkey(mem) != key) ||
 		     (type == lookup_remote && mr_rkey(mem) != key) ||
-		     mr_pd(mem) != pd ||
-		     (access && !(access & mem->access)) ||
+		     mr_pd(mem) != pd || (access && !(access & mem->access)) ||
 		     mem->state != SW_MEM_STATE_VALID)) {
+		pr_warn("MR#0x%x check failed\n", index);
+		pr_warn("lkey: %d, rkey: %d, pd:%d, access: %d, state:%d\n",
+			(type == lookup_local && mr_lkey(mem) != key),
+			(type == lookup_remote && mr_rkey(mem) != key),
+			mr_pd(mem) != pd, (access && !(access & mem->access)),
+			mem->state != SW_MEM_STATE_VALID);
 		sw_drop_ref(mem);
 		mem = NULL;
 	}
 
 	return mem;
+}
+
+int sw_mem_init_user(struct sw_pd *pd, u64 start, u64 length,
+		     u64 iova, int access, struct ib_udata *udata,
+		     struct ib_ucontext *uctx, struct sw_mem *mem)
+{
+	struct sw_map		**map;
+	struct sw_phys_buf	*buf = NULL;
+	struct ib_umem		*umem;
+	struct sg_page_iter	sg_iter;
+	int			num_buf;
+	void			*vaddr;
+	int err;
+
+#ifdef HAVE_IB_UMEM_GET_PEER_DEVICE
+	umem = ib_umem_get_peer(pd->ibpd.device, start, length,
+				access, IB_PEER_MEM_INVAL_SUPP);
+#elif defined(HAVE_IB_UMEM_GET_PEER_UDATA)
+	umem = ib_umem_get_peer(udata, start, length, access,
+				IB_PEER_MEM_INVAL_SUPP);
+#elif defined(HAVE_IB_UMEM_GET_DEVICE_PARAM)
+	umem = ib_umem_get(pd->ibpd.device, start, length, access);
+#elif defined(HAVE_IB_UMEM_GET_NO_DMASYNC)
+	umem = ib_umem_get(udata, start, length, access);
+#elif defined(HAVE_IB_UMEM_GET_UDATA)
+	umem = ib_umem_get(udata, start, length, access, 0);
+#else
+	umem = ib_umem_get(uctx, start, length, access, 0);
+#endif
+	if (IS_ERR(umem)) {
+		pr_warn("err %d from sw_umem_get\n",
+			(int)PTR_ERR(umem));
+		err = -EINVAL;
+		goto err1;
+	}
+
+	mem->umem = umem;
+	num_buf = ib_umem_num_pages(umem);
+
+	sw_mem_init(access, mem);
+
+	err = sw_mem_alloc(mem, num_buf);
+	if (err) {
+		pr_warn("err %d from sw_mem_alloc\n", err);
+		ib_umem_release(umem);
+		goto err1;
+	}
+
+	mem->page_shift		= PAGE_SHIFT;
+	mem->page_mask = PAGE_SIZE - 1;
+
+	num_buf			= 0;
+	map			= mem->map;
+	if (length > 0) {
+		buf = map[0]->buf;
+
+#ifdef HAVE_UMEM_SGT_APPEND
+		for_each_sg_page(umem->sgt_append.sgt.sgl, &sg_iter,
+				 umem->sgt_append.sgt.nents, 0) {
+#else
+		for_each_sg_page(umem->sg_head.sgl, &sg_iter, umem->nmap, 0) {
+#endif
+			if (num_buf >= SW_BUF_PER_MAP) {
+				map++;
+				buf = map[0]->buf;
+				num_buf = 0;
+			}
+
+			vaddr = page_address(sg_page_iter_page(&sg_iter));
+			if (!vaddr) {
+				pr_warn("null vaddr\n");
+				ib_umem_release(umem);
+				err = -ENOMEM;
+				goto err1;
+			}
+
+			buf->addr = (uintptr_t)vaddr;
+			buf->size = PAGE_SIZE;
+			num_buf++;
+			buf++;
+		}
+	}
+
+	mem->ibmr.pd		= &pd->ibpd;
+	mem->umem		= umem;
+	mem->access		= access;
+	mem->length		= length;
+	mem->iova		= iova;
+	mem->va			= start;
+	mem->offset		= ib_umem_offset(umem);
+	mem->state		= SW_MEM_STATE_VALID;
+	mem->type		= SW_MEM_TYPE_MR;
+
+	return 0;
+
+err1:
+	return err;
+}
+
+struct ib_mr *sw_reg_user_mr(struct ib_pd *ibpd, u64 start,
+			     u64 length, u64 iova, int access,
+			     struct ib_udata *udata,
+			     struct ib_ucontext *uctx, u32 stag)
+{
+	int err;
+	struct sw_dev *sw = to_rdev(ibpd->device);
+	struct sw_pd *pd = to_rpd(ibpd);
+	struct sw_mem *mr;
+
+	mr = sw_alloc(&sw->mr_pool);
+	if (!mr) {
+		err = -ENOMEM;
+		goto err1;
+	}
+
+	err = sw_alloc_index(mr, (stag >> 8) + sw->mr_pool.min_index);
+	if (err)
+		goto err2;
+
+	sw_add_ref(pd);
+
+	err = sw_mem_init_user(pd, start, length, iova, access, udata, uctx,
+			       mr);
+	if (err)
+		goto err3;
+
+	return &mr->ibmr;
+
+err3:
+	sw_drop_ref(pd);
+	sw_drop_index(mr);
+err2:
+	sw_drop_ref(mr);
+err1:
+	return ERR_PTR(err);
+}
+
+int sw_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
+{
+	struct sw_mem *mr = to_rmr(ibmr);
+
+	mr->state = SW_MEM_STATE_ZOMBIE;
+	sw_drop_ref(mr_pd(mr));
+	sw_drop_index(mr);
+	sw_drop_ref(mr);
+	return 0;
 }

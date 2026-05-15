@@ -19,7 +19,7 @@
 
 #define ERDMA_MAJOR_VER 0
 #define ERDMA_MEDIUM_VER 2
-#define ERDMA_MINOR_VER 38
+#define ERDMA_MINOR_VER 39
 
 #include <rdma/ib_verbs.h>
 #ifndef RDMA_DRIVER_ERDMA
@@ -188,7 +188,7 @@ static inline void sock_set_reuseaddr(struct sock *sk)
 }
 #endif
 
-#ifndef HAVE_ETHERDEVICE_HELPER
+#ifndef HAVE_ERDMA_U64_TO_ETHER_ADDR
 static inline void u64_to_ether_addr(u64 u, u8 *addr)
 {
 	int i;
@@ -198,7 +198,9 @@ static inline void u64_to_ether_addr(u64 u, u8 *addr)
 		u = u >> 8;
 	}
 }
+#endif
 
+#ifndef HAVE_ERDMA_ADDRCONF_ADDR_EUI48
 static inline void addrconf_addr_eui48_base(u8 *eui, const char *const addr)
 {
 	memcpy(eui, addr, 3);

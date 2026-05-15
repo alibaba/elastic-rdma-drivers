@@ -5,9 +5,14 @@ Generally speaking, this driver already support for almost all current
 distributions of CentOS, Ubuntu, Alinux and Anolis. But for stability,
 verified systems is recommended which listed below:
 * CentOS 7.6/7.9/8.4/8.5
-* Ubuntu 18.04/22.04
+* Ubuntu 18.04/22.04/24.04
 * Alinux 2/3
 * Anolis 8.4/8.5
+
+## r0.2.39
+* Refactor CEQ & CMDQ-EQ creation and destroy flow
+* Sync clang-format from latest kernel
+* Sync code to upstream version
 
 ## r0.2.38
 * Add scatter mtt of QP/CQ buffer support

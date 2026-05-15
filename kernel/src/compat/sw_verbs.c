@@ -161,7 +161,7 @@ static void init_send_wr(struct sw_qp *qp, struct sw_send_wr *wr,
 	wr->opcode = ibwr->opcode;
 	wr->send_flags = ibwr->send_flags;
 
-	if (qp_type(qp) == IB_QPT_GSI) {
+	if (qp_type(qp) == IB_QPT_GSI || qp_type(qp) == IB_QPT_UD) {
 		wr->wr.ud.remote_qpn = ud_wr(ibwr)->remote_qpn;
 		wr->wr.ud.remote_qkey = ud_wr(ibwr)->remote_qkey;
 		wr->wr.ud.pkey_index = ud_wr(ibwr)->pkey_index;
@@ -180,7 +180,7 @@ static int init_send_wqe(struct sw_qp *qp, struct ib_send_wr *ibwr,
 {
 	int num_sge = ibwr->num_sge;
 	struct ib_sge *sge;
-	int i;
+	int i, ret;
 	u8 *p;
 
 	init_send_wr(qp, &wqe->wr, ibwr);
@@ -195,8 +195,18 @@ static int init_send_wqe(struct sw_qp *qp, struct ib_send_wr *ibwr,
 
 		sge = ibwr->sg_list;
 		for (i = 0; i < num_sge; i++, sge++) {
-			memcpy(p, (void *)(uintptr_t)sge->addr,
+			if (qp->is_user) {
+				ret = copy_from_user(
+					p, (void *)(uintptr_t)sge->addr,
 					sge->length);
+				if (ret) {
+					pr_err("Failed to copy inline data.\n");
+					return -EINVAL;
+				}
+			} else {
+				memcpy(p, (void *)(uintptr_t)sge->addr,
+				       sge->length);
+			}
 
 			p += sge->length;
 		}

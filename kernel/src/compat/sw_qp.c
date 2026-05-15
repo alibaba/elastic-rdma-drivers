@@ -293,73 +293,110 @@ static int sw_qp_init_resp(struct sw_dev *sw, struct sw_qp *qp,
 	return 0;
 }
 
-static int attach_sw_pd(struct erdma_pd *pd, struct sw_dev *sw)
+static int attach_sw_pd(struct erdma_pd *pd, struct sw_dev *sw,
+			struct ib_udata *udata, struct ib_ucontext *uctx)
 {
+	struct erdma_mr *emr;
+	struct sw_mem *mem;
 	struct ib_mr *mr;
 	int ret;
 
+	mutex_lock(&pd->sw_lock);
+	if (pd->sw_pd) {
+		ret = 0;
+		goto out;
+	}
+
 	pd->sw_pd = kzalloc(sizeof(*pd->sw_pd), GFP_KERNEL);
-	if (!pd->sw_pd)
-		return -ENOMEM;
+	if (!pd->sw_pd) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	pd->sw_pd->ibpd.device = &sw->ib_dev;
-	ret = sw_alloc_pd(&pd->sw_pd->ibpd, NULL);
+	ret = sw_alloc_pd(&pd->sw_pd->ibpd, udata);
 	if (ret)
-		goto out;
+		goto err_out;
+	pd->sw_pd->master = pd;
 
-	mr = sw_get_dma_mr(&pd->sw_pd->ibpd, IB_ACCESS_LOCAL_WRITE);
-	if (IS_ERR(mr))
-		goto out;
+	if (udata) {
+		/* Create corresponding sw_mr */
+		list_for_each_entry(emr, &pd->mrs, list) {
+			ret = attach_sw_mr(pd, emr, udata, uctx);
+			/* TODO: whether to destory the sw_pd or
+			 * simply return when failing to create
+			 * all of the sw_mrs?
+			 */
+			if (ret)
+				goto free_sw_mrs;
+		}
+	} else {
+		mr = sw_get_dma_mr(&pd->sw_pd->ibpd, IB_ACCESS_LOCAL_WRITE);
+		if (IS_ERR(mr))
+			goto err_out;
 
-	pd->sw_pd->ibpd.local_dma_lkey = mr->lkey;
-	pd->sw_pd->internal_mr = mr;
-	mr->device = &sw->ib_dev;
-	mr->pd = &pd->sw_pd->ibpd;
-	mr->uobject = NULL;
-	mr->need_inval = false;
+		mem = to_rmr(mr);
+		mem->umem = NULL;
+		pd->sw_pd->ibpd.local_dma_lkey = mr->lkey;
+		pd->sw_pd->internal_mr = mr;
+		mr->device = &sw->ib_dev;
+		mr->pd = &pd->sw_pd->ibpd;
+		mr->uobject = NULL;
+		mr->need_inval = false;
+	}
+
+	mutex_unlock(&pd->sw_lock);
 
 	return 0;
-out:
+free_sw_mrs:
+	list_for_each_entry(emr, &pd->mrs, list) {
+		if (emr->sw_mr)
+			sw_dereg_mr(&emr->sw_mr->ibmr, udata);
+	}
+err_out:
 	kfree(pd->sw_pd);
 	pd->sw_pd = NULL;
+out:
+	mutex_unlock(&pd->sw_lock);
 	return ret;
 }
 
-static int dealloc_sw_mr(struct ib_mr *ibmr)
+void detach_sw_pd(struct erdma_pd *pd, struct ib_udata *udata)
 {
-	struct sw_mem *mr = to_rmr(ibmr);
+	struct erdma_mr *emr, *tmp;
 
-	mr->state = SW_MEM_STATE_ZOMBIE;
-	sw_drop_ref(mr_pd(mr));
-	sw_drop_index(mr);
-	sw_drop_ref(mr);
-	return 0;
-}
-
-void detach_sw_pd(struct erdma_pd *pd)
-{
-	dealloc_sw_mr(pd->sw_pd->internal_mr);
-	sw_dealloc_pd(&pd->sw_pd->ibpd, NULL);
+	mutex_lock(&pd->sw_lock);
+	if (!pd->sw_pd->internal_mr) {
+		list_for_each_entry_safe(emr, tmp, &pd->mrs, list) {
+			list_del(&emr->list);
+			if (emr->sw_mr)
+				sw_dereg_mr(&emr->sw_mr->ibmr, udata);
+		}
+	} else {
+		sw_dereg_mr(pd->sw_pd->internal_mr, udata);
+	}
+	sw_dealloc_pd(&pd->sw_pd->ibpd, udata);
 	kfree(pd->sw_pd);
 	pd->sw_pd = NULL;
+	mutex_unlock(&pd->sw_lock);
 }
 
-static int attach_sw_cq(struct erdma_cq *cq, struct sw_dev * sw)
+static int attach_sw_cq(struct erdma_cq *cq, struct sw_dev *sw)
 {
 	struct ib_cq_init_attr attr;
 	int ret;
 
-#ifdef HAVE_RDMA_RESTRACK_ENTRY_USER
-	if (!rdma_is_kernel_res(&cq->ibcq.res)) {
-#else
-	if (cq->user) {
-#endif
-		return -EINVAL;
+	mutex_lock(&cq->sw_lock);
+	if (cq->sw_cq) {
+		ret = 0;
+		goto out;
 	}
 
 	cq->sw_cq = kzalloc(sizeof(*cq->sw_cq), GFP_KERNEL);
-	if (!cq->sw_cq)
-		return -ENOMEM;
+	if (!cq->sw_cq) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	cq->sw_cq->ibcq.device = &sw->ib_dev;
 	attr.cqe = cq->ibcq.cqe;
@@ -372,28 +409,34 @@ static int attach_sw_cq(struct erdma_cq *cq, struct sw_dev * sw)
 
 	memcpy(&cq->sw_cq->ibcq, &cq->ibcq, sizeof(cq->ibcq));
 
+	mutex_unlock(&cq->sw_lock);
 	return 0;
 
 free_scq:
 	kfree(cq->sw_cq);
 	cq->sw_cq = NULL;
+out:
+	mutex_unlock(&cq->sw_lock);
 	return ret;
 }
 
 void detach_sw_cq(struct erdma_cq *cq)
 {
+	mutex_lock(&cq->sw_lock);
 	sw_destroy_cq(&cq->sw_cq->ibcq, NULL);
 	kfree(cq->sw_cq);
 	cq->sw_cq = NULL;
+	mutex_unlock(&cq->sw_lock);
 }
 
 static int create_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd,
-				   struct sw_dev *sw)
+				   struct sw_dev *sw, struct ib_udata *udata,
+				   struct ib_ucontext *uctx)
 {
 	struct erdma_qp *qp = sw_qp->master;
 	int ret;
 
-	ret = attach_sw_pd(to_epd(ibpd), sw);
+	ret = attach_sw_pd(to_epd(ibpd), sw, udata, uctx);
 	if (ret)
 		return ret;
 
@@ -411,40 +454,45 @@ static int create_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd,
 free_scq:
 	detach_sw_cq(qp->scq);
 free_pd:
-	detach_sw_pd(to_epd(ibpd));
+	detach_sw_pd(to_epd(ibpd), udata);
 	return ret;
 }
 
-static void destroy_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd)
+static void destroy_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd,
+				     struct ib_udata *udata)
 {
 	struct erdma_qp *qp = sw_qp->master;
 
 	detach_sw_cq(qp->scq);
-	detach_sw_pd(to_epd(ibpd));
+	detach_sw_pd(to_epd(ibpd), udata);
 }
 
 /* called by the create qp verb */
 int sw_qp_from_init(struct sw_dev *sw, struct sw_qp *qp,
 		     struct ib_qp_init_attr *init,
 		     struct sw_create_qp_resp __user *uresp,
-		     struct ib_pd *ibpd,
-		     struct ib_udata *udata)
+		     struct ib_pd *ibpd, struct ib_udata *udata,
+		     struct ib_ucontext *uctx)
 {
 	struct erdma_cq *rcq = to_ecq(init->recv_cq);
 	struct erdma_cq *scq = to_ecq(init->send_cq);
 	struct erdma_pd *pd = to_epd(ibpd);
 	int err;
 
-	if (init->srq)
+	if (init->srq) {
+		pr_warn("Not supported SRQ for UD QP\n");
 		return -EINVAL;
+	}
 
 	qp->master->scq = to_ecq(init->send_cq);
 	qp->master->rcq = to_ecq(init->recv_cq);
 	qp->master->dev = container_of(sw, struct erdma_dev, sw_dev);
 
-	err = create_sw_qp_components(qp, ibpd, sw);
-	if (err)
+	err = create_sw_qp_components(qp, ibpd, sw, udata, uctx);
+	if (err) {
+		pr_warn("create_sw_qp_components failed\n");
 		return err;
+	}
 
 	sw_add_ref(pd->sw_pd);
 	sw_add_ref(rcq->sw_cq);
@@ -454,6 +502,7 @@ int sw_qp_from_init(struct sw_dev *sw, struct sw_qp *qp,
 	qp->rcq			= rcq->sw_cq;
 	qp->scq			= scq->sw_cq;
 	qp->srq			= NULL;
+	qp->is_user		= (udata) ? 1 : 0;
 
 	rcq->sw_cq->ibcq.device = &sw->ib_dev;
 	scq->sw_cq->ibcq.device = &sw->ib_dev;
@@ -467,6 +516,8 @@ int sw_qp_from_init(struct sw_dev *sw, struct sw_qp *qp,
 	rcq->sw_cq->master = rcq;
 
 	sw_qp_init_misc(sw, qp, init);
+
+	qp->ibqp.qp_num		= qp->master->ibqp.qp_num;
 
 	err = sw_qp_init_req(sw, qp, init, udata, uresp);
 	if (err)
@@ -491,7 +542,7 @@ err1:
 	qp->scq = NULL;
 	qp->srq = NULL;
 
-	destroy_sw_qp_components(qp, ibpd);
+	destroy_sw_qp_components(qp, ibpd, udata);
 
 	sw_drop_ref(pd->sw_pd);
 	sw_drop_ref(rcq->sw_cq);
@@ -550,12 +601,12 @@ int sw_qp_chk_attr(struct sw_dev *sw, struct sw_qp *qp,
 		}
 	}
 
-	if (mask & IB_QP_PORT) {
-		if (!rdma_is_port_valid(&sw->ib_dev, attr->port_num)) {
-			pr_warn("invalid port %d\n", attr->port_num);
-			goto err1;
-		}
-	}
+	// if (mask & IB_QP_PORT) {
+	// 	if (!rdma_is_port_valid(&sw->ib_dev, attr->port_num)) {
+	// 		pr_warn("invalid port %d start %d end %d\n", attr->port_num, rdma_start_port(&sw->ib_dev), rdma_end_port(&sw->ib_dev));
+	// 		goto err1;
+	// 	}
+	// }
 
 	if (mask & IB_QP_CAP && sw_qp_chk_cap(sw, &attr->cap, !!qp->srq))
 		goto err1;

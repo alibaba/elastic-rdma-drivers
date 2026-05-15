@@ -45,6 +45,7 @@ struct sw_pd {
 	struct ib_pd            ibpd;
 	struct sw_pool_entry	pelem;
 	struct ib_mr		*internal_mr;
+	struct erdma_pd		*master;
 };
 
 struct sw_ah {
@@ -276,11 +277,11 @@ enum sw_mem_state {
 };
 
 enum sw_mem_type {
-	SW_MEM_TYPE_NONE,
-	SW_MEM_TYPE_DMA,
-	SW_MEM_TYPE_MR,
+	SW_MEM_TYPE_MR = 0,
 	SW_MEM_TYPE_FMR,
+	SW_MEM_TYPE_DMA,
 	SW_MEM_TYPE_MW,
+	SW_MEM_TYPE_NONE,
 };
 
 #define SW_BUF_PER_MAP		(PAGE_SIZE / sizeof(struct sw_phys_buf))
@@ -323,6 +324,7 @@ struct sw_mem {
 	u32			num_map;
 
 	struct sw_map		**map;
+	struct list_head	list;
 };
 
 struct sw_mc_grp {

@@ -8,7 +8,7 @@ if [[ "$kernelver" == "3.10.0-"* ]] || [[ "$kernelver" == "4.9.0-"* ]]; then
     config="$config -DENABLE_CM_NO_BOUND_IF=1"
 fi
 
-if [[ "$kernelver" == "3.10.0-"* ]]; then
+if [[ "$kernelver" == "3.10.0-"* ]] || [[ "$kernelver" == "4.9."* ]]; then
     config="$config -DDISABLE_VM_ACCESS=1"
 fi
 

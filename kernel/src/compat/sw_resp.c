@@ -867,10 +867,15 @@ static enum resp_states do_complete(struct sw_qp *qp,
 			struct sk_buff *skb = PKT_TO_SKB(pkt);
 
 			wc->wc_flags = IB_WC_GRH | IB_WC_WITH_NETWORK_HDR_TYPE;
-			if (skb->protocol == htons(ETH_P_IP))
+			if (skb->protocol == htons(ETH_P_IP)) {
+				/* UCX sl check */
+				wc->sl = 0x2;
 				wc->network_hdr_type = RDMA_NETWORK_IPV4;
-			else
+			}
+			else {
+				wc->sl = 0x1;
 				wc->network_hdr_type = RDMA_NETWORK_IPV6;
+			}
 
 			if (is_vlan_dev(skb->dev)) {
 				wc->wc_flags |= IB_WC_WITH_VLAN;

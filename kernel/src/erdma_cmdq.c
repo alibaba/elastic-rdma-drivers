@@ -185,42 +185,22 @@ static int erdma_cmdq_eq_init(struct erdma_dev *dev)
 {
 	struct erdma_cmdq *cmdq = &dev->cmdq;
 	struct erdma_eq *eq = &cmdq->eq;
-	u32 buf_size;
+	int ret;
 
-	eq->depth = cmdq->max_outstandings;
-	buf_size = eq->depth << EQE_SHIFT;
-
-	eq->qbuf =
-		dma_alloc_coherent(&dev->pdev->dev, WARPPED_BUFSIZE(buf_size),
-				   &eq->qbuf_dma_addr, GFP_KERNEL | __GFP_ZERO);
-	if (!eq->qbuf)
-		return -ENOMEM;
-
-	spin_lock_init(&eq->lock);
-	atomic64_set(&eq->event_num, 0);
+	ret = erdma_eq_common_init(dev, eq, cmdq->max_outstandings);
+	if (ret)
+		return ret;
 
 	eq->db = dev->func_bar + ERDMA_REGS_CEQ_DB_BASE_REG;
-	eq->dbrec = (u64 *)(eq->qbuf + buf_size);
 
 	erdma_reg_write32(dev, ERDMA_REGS_CMDQ_EQ_ADDR_H_REG,
 			  upper_32_bits(eq->qbuf_dma_addr));
 	erdma_reg_write32(dev, ERDMA_REGS_CMDQ_EQ_ADDR_L_REG,
 			  lower_32_bits(eq->qbuf_dma_addr));
 	erdma_reg_write32(dev, ERDMA_REGS_CMDQ_EQ_DEPTH_REG, eq->depth);
-	erdma_reg_write64(dev, ERDMA_CMDQ_EQ_DB_HOST_ADDR_REG,
-			  eq->qbuf_dma_addr + buf_size);
+	erdma_reg_write64(dev, ERDMA_CMDQ_EQ_DB_HOST_ADDR_REG, eq->dbrec_dma);
 
 	return 0;
-}
-
-static void erdma_cmdq_eq_destroy(struct erdma_dev *dev)
-{
-	struct erdma_cmdq *cmdq = &dev->cmdq;
-
-	dma_free_coherent(&dev->pdev->dev,
-			  (cmdq->eq.depth << EQE_SHIFT) +
-				  ERDMA_EXTRA_BUFFER_SIZE,
-			  cmdq->eq.qbuf, cmdq->eq.qbuf_dma_addr);
 }
 
 int erdma_cmdq_init(struct erdma_dev *dev)
@@ -274,7 +254,7 @@ void erdma_cmdq_destroy(struct erdma_dev *dev)
 
 	clear_bit(ERDMA_CMDQ_STATE_OK_BIT, &cmdq->state);
 
-	erdma_cmdq_eq_destroy(dev);
+	erdma_eq_destroy(dev, &cmdq->eq);
 	erdma_cmdq_cq_destroy(dev);
 	erdma_cmdq_sq_destroy(dev);
 }
@@ -415,16 +395,26 @@ static int erdma_poll_cmd_completion(struct erdma_comp_wait *comp_ctx,
 static int erdma_wait_cmd_completion(struct erdma_comp_wait *comp_ctx,
 				     struct erdma_cmdq *cmdq, u32 timeout)
 {
+	struct erdma_dev *dev = container_of(cmdq, struct erdma_dev, cmdq);
 	unsigned long flags = 0;
 
 	wait_for_completion_timeout(&comp_ctx->wait_event,
 				    msecs_to_jiffies(timeout));
 
 	if (unlikely(comp_ctx->cmd_status != ERDMA_CMD_STATUS_FINISHED)) {
-		spin_lock_irqsave(&cmdq->cq.lock, flags);
-		comp_ctx->cmd_status = ERDMA_CMD_STATUS_TIMEOUT;
-		spin_unlock_irqrestore(&cmdq->cq.lock, flags);
-		return -ETIME;
+		/*
+		 * Try to poll CMDQ CQE directly in case that the interrupt is missing
+		 */
+		erdma_polling_cmd_completions(cmdq);
+		if (unlikely(comp_ctx->cmd_status !=
+			     ERDMA_CMD_STATUS_FINISHED)) {
+			spin_lock_irqsave(&cmdq->cq.lock, flags);
+			comp_ctx->cmd_status = ERDMA_CMD_STATUS_TIMEOUT;
+			spin_unlock_irqrestore(&cmdq->cq.lock, flags);
+			return -ETIME;
+		}
+		ibdev_warn_ratelimited(&dev->ibdev,
+				       "Possible missing CMDQ MSI-X interrupt");
 	}
 
 	return 0;

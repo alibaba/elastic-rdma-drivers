@@ -316,6 +316,7 @@ static int prepare6(struct sw_pkt_info *pkt, struct sk_buff *skb)
 
 int sw_prepare(struct sw_pkt_info *pkt, struct sk_buff *skb, u32 *crc)
 {
+	struct erdma_dev *edev;
 	int err = 0;
 
 	if (skb->protocol == htons(ETH_P_IP))
@@ -325,8 +326,13 @@ int sw_prepare(struct sw_pkt_info *pkt, struct sk_buff *skb, u32 *crc)
 
 	*crc = sw_icrc_hdr(pkt, skb);
 
-	if (ether_addr_equal(skb->dev->dev_addr, sw_get_av(pkt)->dmac))
+	edev = erdma_device_get_by_dgid(
+		(union ib_gid *)&sw_get_av(pkt)->grh.dgid.raw);
+	if (edev) {
+		skb->dev = edev->netdev;
+		pkt->sw = &edev->sw_dev;
 		pkt->mask |= SW_LOOPBACK_MASK;
+	}
 
 	return err;
 }
