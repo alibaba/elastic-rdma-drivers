@@ -156,6 +156,10 @@ enum CMDQ_COMMON_OPCODE {
 
 	CMDQ_OPCODE_SET_EXT_ATTR = 10,
 	CMDQ_OPCODE_GET_EXT_ATTR = 11,
+	CMDQ_OPCODE_SYNC_INFO = 12,
+	CMDQ_OPCODE_RESERVED_0 = 13,
+	CMDQ_OPCODE_QUERY_CC_PROFILER_LIST = 14,
+	CMDQ_OPCODE_QUERY_CC_PROFILER_NAME = 15,
 };
 
 /* cmdq-SQE HDR */
@@ -205,15 +209,28 @@ struct erdma_cmdq_set_retrans_num_req {
 
 #define ERDMA_EXT_ATTR_DACK_COUNT_MASK BIT(0)
 #define ERDMA_EXT_ATTR_LEGACY_MODE_MASK BIT(2)
+#define ERDMA_EXT_ATTR_TLP_MASK BIT(4)
+#define ERDMA_EXT_ATTR_CC_PROFILER_MASK BIT(5)
 struct erdma_ext_attr {
 	u32 attr_mask;
 	u8 dack_count;
 	u8 enable;
+	u16 cc_profiler;
 };
 
 struct erdma_cmdq_set_ext_attr_req {
 	u64 hdr;
 	struct erdma_ext_attr attr;
+};
+
+#define ERDMA_SYNC_INFO_COMPAT_MODE BIT(24)
+#define ERDMA_SYNC_INFO_MAJOR_VER GENMASK(23, 16)
+#define ERDMA_SYNC_INFO_MEDIUM_VER GENMASK(15, 8)
+#define ERDMA_SYNC_INFO_MINOR_VER GENMASK(7, 0)
+struct erdma_cmdq_sync_info_req {
+	u64 hdr;
+	u32 version;
+	u32 rsvd[5];
 };
 
 /* create_cq cfg0 */
@@ -282,6 +299,7 @@ struct erdma_cmdq_dereg_mr_req {
 
 #define ERDMA_CMD_MODIFY_QP_IPV6_MASK BIT(31)
 #define ERDMA_CMD_MODIFY_QP_WWI_PERF_MASK BIT(30)
+#define ERDMA_CMD_MODIFY_QP_TLP_MASK BIT(29)
 #define ERDMA_CMD_MODIFY_QP_RQPN_MASK GENMASK(19, 0)
 
 struct erdma_cmdq_modify_qp_req {
@@ -600,6 +618,19 @@ struct erdma_cmdq_query_resp_hdr {
 	u32 rsvd[2];
 };
 
+#define ERDMA_HW_CC_PROFILER_NUM 1024
+#define ERDMA_HW_CC_PROFILER_NAME_LEN 124
+struct erdma_cmdq_query_cc_profiler_list_resp {
+	struct erdma_cmdq_query_resp_hdr hdr;
+	u32 idx_mask[32];
+};
+
+struct erdma_cmdq_query_cc_profiler_name_resp {
+	struct erdma_cmdq_query_resp_hdr hdr;
+	u32 valid;
+	char name[ERDMA_HW_CC_PROFILER_NAME_LEN];
+};
+
 struct erdma_cmdq_query_stats_resp {
 	struct erdma_cmdq_query_resp_hdr hdr;
 
@@ -714,6 +745,8 @@ struct erdma_cmdq_query_ext_attr_resp {
 	u32 attr_mask;
 
 	u8 dack_count;
+	u8 rsvd;
+	u16 cc_profiler;
 };
 
 struct erdma_cmdq_dump_addr_req {

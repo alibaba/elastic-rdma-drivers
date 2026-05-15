@@ -1,3 +1,9 @@
+erdma (1.1.0-2) unstable; urgency=medium
+
+  * Mirror fixes with 1.1.0.
+
+ -- Cheng Xu <chengyou@linux.alibaba.com> Mon, 21 Oct 2024 15:16:27 +0800
+
 erdma (1.1.0-1) unstable; urgency=medium
 
   * Update to 1.1.0 (version 0.2.38), Detail can be seen in RELEASENOTES.md

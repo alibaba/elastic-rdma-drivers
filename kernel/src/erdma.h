@@ -345,6 +345,7 @@ int erdma_query_ext_attr(struct erdma_dev *dev, void *out);
 int erdma_set_ext_attr(struct erdma_dev *dev, struct erdma_ext_attr *attr);
 int erdma_set_dack_count(struct erdma_dev *dev, u32 value);
 int erdma_enable_legacy_mode(struct erdma_dev *dev, u32 value);
+void erdma_sync_info(struct erdma_dev *dev);
 
 void erdma_debugfs_register(void);
 void erdma_debugfs_unregister(void);

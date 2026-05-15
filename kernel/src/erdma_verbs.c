@@ -25,10 +25,6 @@
 #include "erdma_cm.h"
 #include "erdma_verbs.h"
 
-bool rand_qpn;
-module_param(rand_qpn, bool, 0444);
-MODULE_PARM_DESC(rand_qpn, "randomized qpn");
-
 extern bool compat_mode;
 
 static void assemble_qbuf_mtt_for_cmd(struct erdma_mem *mem, u32 *cfg,
@@ -1168,13 +1164,13 @@ static int init_kernel_qp(struct erdma_dev *dev, struct erdma_qp *qp,
 	if (ret)
 		goto err_out;
 
-	kqp->sq_dbrec = dma_pool_alloc(dev->db_pool, GFP_KERNEL | __GFP_ZERO,
-				       &kqp->sq_dbrec_dma);
+	kqp->sq_dbrec =
+		dma_pool_zalloc(dev->db_pool, GFP_KERNEL, &kqp->sq_dbrec_dma);
 	if (!kqp->sq_dbrec)
 		goto err_out;
 
-	kqp->rq_dbrec = dma_pool_alloc(dev->db_pool, GFP_KERNEL | __GFP_ZERO,
-				       &kqp->rq_dbrec_dma);
+	kqp->rq_dbrec =
+		dma_pool_zalloc(dev->db_pool, GFP_KERNEL, &kqp->rq_dbrec_dma);
 	if (!kqp->rq_dbrec)
 		goto err_out;
 
@@ -1350,7 +1346,6 @@ int erdma_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *attrs,
 	struct erdma_qp *qp = to_eqp(ibqp);
 	struct erdma_ureq_create_qp ureq;
 	struct erdma_ucontext *uctx;
-	u32 next_idx;
 	int ret;
 
 #ifdef HAVE_ERDMA_MAD
@@ -1396,10 +1391,6 @@ int erdma_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *attrs,
 	kref_init(&qp->ref);
 	init_completion(&qp->safe_free);
 
-	if (rand_qpn) {
-		get_random_bytes(&next_idx, sizeof(u32));
-		dev->next_alloc_qpn = next_idx % dev->attrs.max_qp;
-	}
 #ifdef HAVE_XARRAY_API
 	ret = xa_alloc_cyclic(&dev->qp_xa, &qp->ibqp.qp_num, qp,
 			      XA_LIMIT(1, dev->attrs.max_qp - 1),
@@ -2440,8 +2431,8 @@ static int erdma_init_kernel_cq(struct erdma_cq *cq)
 	if (ret)
 		goto err_free_qbuf;
 
-	cq->kern_cq.dbrec = dma_pool_alloc(
-		dev->db_pool, GFP_KERNEL | __GFP_ZERO, &cq->kern_cq.dbrec_dma);
+	cq->kern_cq.dbrec = dma_pool_zalloc(dev->db_pool, GFP_KERNEL,
+					    &cq->kern_cq.dbrec_dma);
 	if (!cq->kern_cq.dbrec) {
 		ret = -ENOMEM;
 		goto err_free_mtt;
@@ -2688,8 +2679,7 @@ int erdma_query_hw_stats(struct erdma_dev *dev)
 	erdma_cmdq_build_reqhdr(&req.hdr, CMDQ_SUBMOD_COMMON,
 				CMDQ_OPCODE_GET_STATS);
 
-	stats = dma_pool_alloc(dev->resp_pool, GFP_KERNEL | __GFP_ZERO,
-			       &dma_addr);
+	stats = dma_pool_zalloc(dev->resp_pool, GFP_KERNEL, &dma_addr);
 	if (!stats)
 		return -ENOMEM;
 

@@ -152,6 +152,7 @@ without_cep:
 	req.cfg = FIELD_PREP(ERDMA_CMD_MODIFY_QP_STATE_MASK, qp->attrs.state) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_CC_MASK, qp->attrs.cc) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_QPN_MASK, QP_ID(qp));
+	req.cookie |= FIELD_PREP(ERDMA_CMD_MODIFY_QP_TLP_MASK, 1);
 
 	if (wwi_perf || compat_mode)
 		req.cookie |= FIELD_PREP(ERDMA_CMD_MODIFY_QP_WWI_PERF_MASK, 1);
@@ -174,8 +175,9 @@ static int erdma_modify_qp_state_to_rts_compat(struct erdma_qp *qp,
 	req.cfg = FIELD_PREP(ERDMA_CMD_MODIFY_QP_STATE_MASK, qp->attrs.state) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_CC_MASK, qp->attrs.cc) |
 		  FIELD_PREP(ERDMA_CMD_MODIFY_QP_QPN_MASK, QP_ID(qp));
-	req.cookie = FIELD_PREP(ERDMA_CMD_MODIFY_QP_RQPN_MASK,
-				qp->attrs.remote_qp_num);
+	req.cookie =
+		FIELD_PREP(ERDMA_CMD_MODIFY_QP_RQPN_MASK, qp->attrs.remote_qp_num) |
+		FIELD_PREP(ERDMA_CMD_MODIFY_QP_TLP_MASK, 1);
 
 	if (((struct sockaddr_in *)&qp->attrs.raddr)->sin_family == AF_INET) {
 		req.dip = qp->attrs.raddr.in.sin_addr.s_addr;

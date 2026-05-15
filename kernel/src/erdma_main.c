@@ -27,6 +27,10 @@ static int default_cc = -1;
 module_param(default_cc, int, 0444);
 MODULE_PARM_DESC(default_cc, "default cc method");
 
+bool rand_qpn = true;
+module_param(rand_qpn, bool, 0444);
+MODULE_PARM_DESC(rand_qpn, "randomized qpn");
+
 extern bool compat_mode;
 
 static LIST_HEAD(dev_list);
@@ -304,6 +308,7 @@ static int erdma_device_register(struct erdma_dev *dev)
 		dev->attrs.retrans_num = 0;
 
 	erdma_add_dev_to_list(dev);
+	erdma_sync_info(dev);
 
 #ifdef HAVE_IB_REGISTER_DEVICE_DMA_DEVICE_PARAM
 	ret = ib_register_device(ibdev, ibdev->name, &dev->pdev->dev);
@@ -965,6 +970,7 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 {
 	struct erdma_dev *dev = pci_get_drvdata(pdev);
 	struct ib_device *ibdev = &dev->ibdev;
+	u32 tmp_idx;
 	u64 mac;
 	int ret;
 
@@ -1036,6 +1042,12 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 #endif
 	dev->next_alloc_cqn = 1;
 	dev->next_alloc_qpn = 1;
+	if (rand_qpn) {
+		get_random_bytes(&tmp_idx, sizeof(u32));
+		dev->next_alloc_qpn = tmp_idx % dev->attrs.max_qp;
+		if (!dev->next_alloc_qpn)
+			dev->next_alloc_qpn = 1;
+	}
 
 	ret = erdma_res_cb_init(dev);
 	if (ret) {
