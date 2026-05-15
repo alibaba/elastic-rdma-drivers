@@ -189,8 +189,7 @@ static int erdma_netdev_event(struct notifier_block *nb, unsigned long event,
 	ibdev_dbg(&dev->ibdev, " netdev:%s,ns:%p: Event %lu to erdma_dev %p\n",
 		  netdev->name, dev_net(netdev), event, dev);
 
-	if (dev->netdev != netdev &&
-	    (dev->netdev || event != NETDEV_REGISTER))
+	if (dev->netdev != netdev && (dev->netdev || event != NETDEV_REGISTER))
 		goto done;
 
 	switch (event) {
@@ -209,24 +208,25 @@ static int erdma_netdev_event(struct notifier_block *nb, unsigned long event,
 		}
 		break;
 	case NETDEV_UNREGISTER:
-		ib_device_set_netdev(&dev->ibdev, NULL, 1);
 		write_lock(&dev->netdev_lock);
 		dev->netdev = NULL;
 		write_unlock(&dev->netdev_lock);
+		ib_device_set_netdev(&dev->ibdev, NULL, 1);
 		break;
 	case NETDEV_REGISTER:
 #ifdef HAVE_LOWER_LEVEL_IN_NET_DEVICE
 		if (netdev->lower_level > 1)
 			break;
 #endif
-		write_lock(&dev->netdev_lock);
 		if (dev->netdev == NULL &&
 		    ether_addr_equal_unaligned(netdev->perm_addr,
 					       dev->attrs.peer_addr)) {
-			ib_device_set_netdev(&dev->ibdev, netdev, 1);
+			write_lock(&dev->netdev_lock);
 			dev->netdev = netdev;
+			write_unlock(&dev->netdev_lock);
+			ib_device_set_netdev(&dev->ibdev, netdev, 1);
 		}
-		write_unlock(&dev->netdev_lock);
+
 		break;
 	case NETDEV_CHANGEADDR:
 	case NETDEV_GOING_DOWN:
@@ -267,12 +267,14 @@ static int erdma_enum_and_get_netdev(struct erdma_dev *dev)
 #endif
 			if (ether_addr_equal_unaligned(netdev->perm_addr,
 						       dev->attrs.peer_addr)) {
-				ret = ib_device_set_netdev(&dev->ibdev, netdev, 1);
+				ret = ib_device_set_netdev(&dev->ibdev, netdev,
+							   1);
 				if (ret) {
 					up_read(&net_rwsem);
 					rtnl_unlock();
 					ibdev_warn(&dev->ibdev,
-						   "failed (%d) to link netdev", ret);
+						   "failed (%d) to link netdev",
+						   ret);
 					return ret;
 				}
 				/* This is initialize flow, no need use rwlock to protect netdev */
@@ -316,12 +318,15 @@ static int erdma_device_register(struct erdma_dev *dev)
 
 	ret = erdma_set_dack_count(dev, 0);
 	if (ret)
-		ibdev_warn(&dev->ibdev, "failed to disable dack err=%d.\n", ret);
+		ibdev_warn(&dev->ibdev, "failed to disable dack err=%d.\n",
+			   ret);
 
 	if (legacy_mode) {
 		ret = erdma_enable_legacy_mode(dev, 1);
 		if (ret) {
-			ibdev_err(&dev->ibdev, "failed to enable legacy mode err=%d.\n", ret);
+			ibdev_err(&dev->ibdev,
+				  "failed to enable legacy mode err=%d.\n",
+				  ret);
 			return -EINVAL;
 		}
 	}
@@ -335,6 +340,16 @@ static int erdma_device_register(struct erdma_dev *dev)
 		ret = attach_sw_dev(dev);
 		if (ret)
 			return ret == -ENOENT ? -EPROBE_DEFER : ret;
+	}
+
+	if (!compat_mode) {
+#ifdef HAVE_IB_DEV_OPS
+		memcpy(ibdev->iw_ifname, dev->netdev->name,
+		       sizeof(ibdev->iw_ifname));
+#else
+		memcpy(ibdev->iwcm->ifname, dev->netdev->name,
+		       sizeof(ibdev->iwcm->ifname));
+#endif
 	}
 
 	dev->mtu = dev->netdev->mtu;
@@ -789,7 +804,7 @@ static int erdma_check_version(struct erdma_dev *dev)
 
 	return (fw_major != ERDMA_MAJOR_VER || fw_medium != ERDMA_MEDIUM_VER) ?
 		       -1 :
-			     0;
+		       0;
 }
 
 #define ERDMA_GET_CAP(name, cap) FIELD_GET(ERDMA_CMD_DEV_CAP_##name##_MASK, cap)
@@ -829,7 +844,8 @@ static int erdma_dev_attrs_init(struct erdma_dev *dev)
 	dev->attrs.max_sge_rd = ERDMA_MAX_SGE_RD;
 	dev->attrs.max_pd = ERDMA_MAX_PD;
 	dev->attrs.max_umem = ERDMA_MAX_UMEM;
-	dev->attrs.max_mtte = ERDMA_NMTTE_PER_QBLOCK * ERDMA_GET_CAP(QBLOCK, cap1);
+	dev->attrs.max_mtte =
+		ERDMA_NMTTE_PER_QBLOCK * ERDMA_GET_CAP(QBLOCK, cap1);
 
 	dev->res_cb[ERDMA_RES_TYPE_PD].max_cap = ERDMA_MAX_PD;
 	dev->res_cb[ERDMA_RES_TYPE_STAG_IDX].max_cap = dev->attrs.max_mr;
@@ -1025,10 +1041,13 @@ static void erdma_ibverbs_init(struct ib_device *ibdev)
 #endif
 
 #ifdef HAVE_UAPI_DEF_SUPPORT
-static const struct uapi_definition erdma_defs[] = {
+/* clang-format off */
+static const struct uapi_definition erdma_defs[] =
+{
 	UAPI_DEF_CHAIN(erdma_devx_defs),
 	{}
 };
+/* clang-format on */
 #endif
 
 static int erdma_ib_device_add(struct pci_dev *pdev)
@@ -1071,9 +1090,9 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 			(1ull << IB_USER_VERBS_CMD_REQ_NOTIFY_CQ);
 
 		ibdev->node_type = RDMA_NODE_IB_CA;
-	}
-	else
+	} else {
 		ibdev->node_type = RDMA_NODE_RNIC;
+	}
 	memcpy(ibdev->node_desc, ERDMA_NODE_DESC, sizeof(ERDMA_NODE_DESC));
 
 	/*
@@ -1094,7 +1113,7 @@ static int erdma_ib_device_add(struct pci_dev *pdev)
 	if (compat_mode)
 		ib_set_device_ops(ibdev, &erdma_compat_ops);
 #else
-	ibdev->iwcm = kmalloc(sizeof(struct iw_cm_verbs), GFP_KERNEL);
+	ibdev->iwcm = kzalloc(sizeof(struct iw_cm_verbs), GFP_KERNEL);
 	if (!ibdev->iwcm)
 		return -ENOMEM;
 
@@ -1249,13 +1268,14 @@ static void erdma_remove(struct pci_dev *pdev)
 	erdma_remove_dev(pdev);
 }
 
+/* clang-format off */
 static struct pci_driver erdma_pci_driver = {
 	.name = DRV_MODULE_NAME,
 	.id_table = erdma_pci_tbl,
 	.probe = erdma_probe,
 	.remove = erdma_remove
 };
-
+/* clang-format on */
 MODULE_DEVICE_TABLE(pci, erdma_pci_tbl);
 
 static __init int erdma_init_module(void)
