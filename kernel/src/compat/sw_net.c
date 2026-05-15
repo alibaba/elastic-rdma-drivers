@@ -19,8 +19,6 @@
 #include "sw_loc.h"
 #include "../erdma_verbs.h"
 
-static struct sw_recv_sockets recv_sockets;
-
 int sw_mcast_add(struct sw_dev *sw, union ib_gid *mgid)
 {
 	int err;
@@ -44,8 +42,8 @@ int sw_mcast_delete(struct sw_dev *sw, union ib_gid *mgid)
 }
 
 static struct dst_entry *sw_find_route4(struct net_device *ndev,
-				  struct in_addr *saddr,
-				  struct in_addr *daddr)
+					struct in_addr *saddr,
+					struct in_addr *daddr)
 {
 	struct rtable *rt;
 	struct flowi4 fl = { { 0 } };
@@ -56,7 +54,7 @@ static struct dst_entry *sw_find_route4(struct net_device *ndev,
 	memcpy(&fl.daddr, daddr, sizeof(*daddr));
 	fl.flowi4_proto = IPPROTO_UDP;
 
-	rt = ip_route_output_key(&init_net, &fl);
+	rt = ip_route_output_key(dev_net(ndev), &fl);
 	if (IS_ERR(rt)) {
 		pr_err_ratelimited("no route to %pI4\n", &daddr->s_addr);
 		return NULL;
@@ -517,28 +515,33 @@ void sw_set_port_state(struct sw_dev *sw)
 		sw_port_down(sw);
 }
 
-static int sw_net_ipv4_init(void)
+static int sw_net_ipv4_init(struct sw_recv_sockets *recv_sockets,
+			    struct net *net)
 {
-	recv_sockets.sk4 = sw_setup_udp_tunnel(&init_net,
-				htons(ROCE_V2_UDP_DPORT), false);
-	if (IS_ERR(recv_sockets.sk4)) {
-		recv_sockets.sk4 = NULL;
-		pr_err("Failed to create IPv4 UDP tunnel\n");
-		return -1;
+	int ret;
+
+	recv_sockets->sk4 =
+		sw_setup_udp_tunnel(net, htons(ROCE_V2_UDP_DPORT), false);
+	if (IS_ERR(recv_sockets->sk4)) {
+		ret = PTR_ERR(recv_sockets->sk4);
+		recv_sockets->sk4 = NULL;
+		pr_err_ratelimited(
+			"Failed to create IPv4 UDP tunnel, ret = %d\n", ret);
+		return ret;
 	}
 
 	return 0;
 }
 
-void sw_net_exit(void)
+void sw_net_exit(struct sw_recv_sockets *recv_sockets)
 {
-	sw_release_udp_tunnel(recv_sockets.sk6);
-	sw_release_udp_tunnel(recv_sockets.sk4);
+	sw_release_udp_tunnel(recv_sockets->sk6);
+	sw_release_udp_tunnel(recv_sockets->sk4);
 }
 
-int sw_net_init(void)
+int sw_net_init(struct sw_recv_sockets *recv_sockets, struct net *net)
 {
-	recv_sockets.sk6 = NULL;
+	recv_sockets->sk6 = NULL;
 
-	return sw_net_ipv4_init();
+	return sw_net_ipv4_init(recv_sockets, net);
 }

@@ -1,3 +1,9 @@
+erdma (1.2.0-4) unstable; urgency=medium
+
+  * Support Rocky 9.2
+
+ -- Cheng Xu <chengyou@linux.alibaba.com> Mon,  9 Mar 2026 15:21:33 +0800
+
 erdma (1.2.0-3) unstable; urgency=medium
 
   * Support DEVX and DeepEP

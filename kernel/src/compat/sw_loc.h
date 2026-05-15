@@ -208,7 +208,7 @@ static inline unsigned int wr_opcode_mask(int opcode, struct sw_qp *qp)
 }
 
 static inline int sw_xmit_packet(struct sw_qp *qp, struct sw_pkt_info *pkt,
-				  struct sk_buff *skb)
+				 struct sk_buff *skb)
 {
 	int err;
 	int is_request = pkt->mask & SW_REQ_MASK;

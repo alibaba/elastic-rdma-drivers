@@ -17,7 +17,7 @@ struct sw_recv_sockets {
 	struct socket *sk6;
 };
 
-int sw_net_init(void);
-void sw_net_exit(void);
+int sw_net_init(struct sw_recv_sockets *recv_sockets, struct net *net);
+void sw_net_exit(struct sw_recv_sockets *recv_sockets);
 
 #endif /* SW_NET_H */

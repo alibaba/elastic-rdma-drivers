@@ -553,7 +553,9 @@ register_netdevice_notifier_rh(NULL);
 
 try_compile("#include <net/addrconf.h>"
   "
-addrconf_addr_eui48(NULL, NULL);
+  u8 eui[8];
+  u8 mac[6];
+  addrconf_addr_eui48_base(eui, mac);
   "
   HAVE_ERDMA_ADDRCONF_ADDR_EUI48 ""
 )

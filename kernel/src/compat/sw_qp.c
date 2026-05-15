@@ -196,16 +196,21 @@ static void sw_qp_init_misc(struct sw_dev *sw, struct sw_qp *qp,
 }
 
 static int sw_qp_init_req(struct sw_dev *sw, struct sw_qp *qp,
-			   struct ib_qp_init_attr *init, struct ib_udata *udata,
-			   struct sw_create_qp_resp __user *uresp)
+			  struct ib_qp_init_attr *init, struct ib_udata *udata,
+			  struct sw_create_qp_resp __user *uresp)
 {
 	int err;
 	int wqe_size;
 
+	if (!sw->master || !sw->master->netdev)
+		return -ENODEV;
+
 #ifdef HAVE_SOCK_NO_NET_PARAM
-	err = sock_create_kern(AF_INET, SOCK_DGRAM, 0, &qp->sk);
+	err = __sock_create(dev_net(sw->master->netdev), AF_INET, SOCK_DGRAM, 0,
+			    &qp->sk, 1);
 #else
-	err = sock_create_kern(&init_net, AF_INET, SOCK_DGRAM, 0, &qp->sk);
+	err = sock_create_kern(dev_net(sw->master->netdev), AF_INET, SOCK_DGRAM,
+			       0, &qp->sk);
 #endif
 	if (err < 0)
 		return err;
@@ -469,10 +474,9 @@ static void destroy_sw_qp_components(struct sw_qp *sw_qp, struct ib_pd *ibpd,
 
 /* called by the create qp verb */
 int sw_qp_from_init(struct sw_dev *sw, struct sw_qp *qp,
-		     struct ib_qp_init_attr *init,
-		     struct sw_create_qp_resp __user *uresp,
-		     struct ib_pd *ibpd, struct ib_udata *udata,
-		     struct ib_ucontext *uctx)
+		    struct ib_qp_init_attr *init,
+		    struct sw_create_qp_resp __user *uresp, struct ib_pd *ibpd,
+		    struct ib_udata *udata, struct ib_ucontext *uctx)
 {
 	struct erdma_cq *rcq = to_ecq(init->recv_cq);
 	struct erdma_cq *scq = to_ecq(init->send_cq);

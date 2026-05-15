@@ -15,6 +15,7 @@
 struct erdma_net {
 	struct list_head erdma_list;
 	struct socket *rsvd_sock[16];
+	struct sw_recv_sockets mad_sock;
 };
 
 static unsigned int erdma_net_id;
@@ -572,7 +573,26 @@ static void erdma_port_release(struct socket **rsvd_sock)
 static __net_init int erdma_init_net(struct net *net)
 {
 	struct erdma_net *node = net_generic(net, erdma_net_id);
-	return erdma_port_init(net, node->rsvd_sock);
+	int ret;
+
+	ret = erdma_port_init(net, node->rsvd_sock);
+	if (ret) {
+		pr_err_ratelimited(
+			"erdma_port_init failed for erdma_net(%u), ret = %d",
+			erdma_net_id, ret);
+		return ret;
+	}
+
+	ret = sw_net_init(&node->mad_sock, net);
+	if (ret) {
+		pr_err_ratelimited(
+			"sw_net_init failed for erdma_net(%u), ret = %d",
+			erdma_net_id, ret);
+		erdma_port_release(node->rsvd_sock);
+		return ret;
+	}
+
+	return 0;
 }
 
 static void __net_exit erdma_exit_batch_net(struct list_head *net_list)
@@ -584,6 +604,7 @@ static void __net_exit erdma_exit_batch_net(struct list_head *net_list)
 	list_for_each_entry(net, net_list, exit_list) {
 		struct erdma_net *node = net_generic(net, erdma_net_id);
 		erdma_port_release(node->rsvd_sock);
+		sw_net_exit(&node->mad_sock);
 	}
 	rtnl_unlock();
 }
@@ -597,20 +618,10 @@ static struct pernet_operations erdma_net_ops = {
 
 int erdma_compat_init(void)
 {
-	int ret;
-
 	if (!compat_mode)
 		return 0;
 
-	ret = sw_net_init();
-	if (ret)
-		return ret;
-
-	ret = register_pernet_subsys(&erdma_net_ops);
-	if (ret)
-		sw_net_exit();
-
-	return ret;
+	return register_pernet_subsys(&erdma_net_ops);
 }
 
 void erdma_compat_exit(void)
@@ -619,6 +630,4 @@ void erdma_compat_exit(void)
 		return;
 
 	unregister_pernet_subsys(&erdma_net_ops);
-
-	sw_net_exit();
 }
